@@ -13,6 +13,8 @@ A rewrite of [gork](https://github.com/techwithanirudh/gork): a sarcastic, human
 | Sending | waits for the whole answer | **each message is sent the moment it's generated** |
 | Bursts | one LLM call per message | messages are batched (250ms after a ping, 1.5s otherwise) and answered together |
 | Reply target | often wrong | model points at transcript `#numbers`, can reply to / react on any message |
+| Memory | Pinecone vector memories | **every message in the channel**, archived to SQLite (`data/archive.db`) and crawled back to the channel's first message in the background; gork searches it himself when someone brings up old stuff |
+| Interruptions | ignored | talk over him mid-reply and he stops, then gets mad at you |
 | Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key; settings saved to `data/settings.json` |
 
 ## Setup
@@ -37,6 +39,6 @@ Any OpenRouter-compatible endpoint works (`AI_BASE_URL`), including the Hack Clu
 | `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up |
 | `/ping` | latency check |
 
-Start a message with `//` to hide it from gork.
+Start a message with `//` to hide it from gork (it's never archived either). Deleted messages are removed from the archive.
 
 Tuning knobs (context size, debounce, rate limits) live in `src/config.ts`.

@@ -47,3 +47,19 @@ export const activities: { type: ActivityType; name: string }[] = [
   { type: ActivityType.Watching, name: 'tv' },
   { type: ActivityType.Playing, name: 'in the gym' },
 ];
+
+// long-term memory: every message gork sees is saved to data/archive.db
+export const archive = {
+  // walk back through each active channel's entire history in the background
+  crawl: true,
+  maxPerChannel: 250_000,
+  crawlDelayMs: 750,
+  // after downtime, max pages (of 100) to fetch to reconnect with the archive
+  maxGapPages: 50,
+  // what a search returns
+  searchHits: 6,
+  searchContext: 2,
+  searchChars: 6000,
+  // searches gork may run before he has to answer
+  maxSearches: 2,
+};

@@ -1,7 +1,8 @@
 import type { Message, SendableChannels } from 'discord.js';
 import { contextPrompt, systemPrompt } from './ai/prompt';
 import { type Action, think } from './ai/think';
-import { keywords, limits, timezone, timing } from './config';
+import { crawlChannel, searchArchive } from './archive';
+import { archive, keywords, limits, timezone, timing } from './config';
 import {
   type ChatMsg,
   channelLog,
@@ -26,6 +27,10 @@ interface ChannelState {
   quietStreak: number;
   quietUntil: number;
   calls: number[];
+  // set while gork is mid-turn, so someone talking over him can cut him off
+  abort?: AbortController;
+  spoke: number;
+  interruptedBy: string[];
 }
 
 const states = new Map<string, ChannelState>();
@@ -64,8 +69,11 @@ function stateFor(message: Message): ChannelState | undefined {
       quietStreak: 0,
       quietUntil: 0,
       calls: [],
+      spoke: 0,
+      interruptedBy: [],
     };
     states.set(message.channelId, state);
+    crawlChannel(message.channel);
   }
   Object.assign(state, describePlace(message));
   state.channel = message.channel;
@@ -74,6 +82,16 @@ function stateFor(message: Message): ChannelState | undefined {
 
 /** Called for every human message gork can see. Decides if he should think about the channel. */
 export function onMessage(message: Message, msg: ChatMsg) {
+  // someone talked while gork was mid-thought after he'd already started talking
+  const busy = states.get(message.channelId);
+  if (busy?.abort && busy.spoke > 0 && !busy.abort.signal.aborted) {
+    log.info(`${busy.place}: ${msg.name} interrupted gork`);
+    busy.interruptedBy.push(msg.id);
+    busy.abort.abort();
+    schedule(busy, true);
+    return;
+  }
+
   const isDM = !message.guild;
   const mode = settings.mode(message.guildId, message.channelId);
   if (mode === 'none') return;
@@ -141,7 +159,9 @@ async function run(state: ChannelState) {
 
     const chLog = channelLog(state.id);
     await chLog.backfill(state.channel);
-    const transcript = renderTranscript(chLog);
+    const interruptedBy = new Set(state.interruptedBy);
+    state.interruptedBy = [];
+    const transcript = renderTranscript(chLog, interruptedBy);
     if (transcript.newCount === 0 && !urgent) return;
 
     state.calls.push(now);
@@ -149,24 +169,61 @@ async function run(state: ChannelState) {
     if (urgent) stopTyping = startTyping(state.channel);
 
     const safe = settings.safety(state.guildId, state.id) === 'safe';
+    const abort = new AbortController();
+    state.abort = abort;
+    state.spoke = 0;
     const started = Date.now();
+    const said: string[] = [];
+    const searches: string[] = [];
     let acted = 0;
 
-    for await (const action of think({
-      system: systemPrompt(safe),
-      prompt: contextPrompt({
-        place: state.place,
-        topic: state.topic,
-        time: nowFmt.format(Date.now()),
-        transcript: transcript.text,
-        pinged: urgent,
-      }),
-      images: transcript.images,
-    })) {
-      if (acted === 0) {
-        log.info(`${state.place}: first action after ${Date.now() - started}ms`);
+    // gork can look things up in the channel archive, then think again with the results
+    for (let round = 0; round <= archive.maxSearches; round++) {
+      const canSearch = round < archive.maxSearches;
+      const wanted: string[] = [];
+
+      for await (const action of think({
+        system: systemPrompt(safe),
+        prompt: contextPrompt({
+          place: state.place,
+          topic: state.topic,
+          time: nowFmt.format(Date.now()),
+          transcript: transcript.text,
+          pinged: urgent,
+          interrupted: [...interruptedBy]
+            .map((id) => chLog.byId.get(id)?.name)
+            .filter((n): n is string => !!n),
+          searches,
+          said,
+          canSearch,
+        }),
+        images: round === 0 ? transcript.images : [],
+        signal: abort.signal,
+      })) {
+        if (abort.signal.aborted) break;
+        if (action.type === 'search') {
+          if (canSearch && action.text.trim()) wanted.push(action.text.trim());
+          continue;
+        }
+        if (acted === 0) {
+          log.info(`${state.place}: first message after ${Date.now() - started}ms`);
+        }
+        const text = await perform(state.channel, transcript, action);
+        if (text) {
+          acted++;
+          state.spoke++;
+          said.push(text);
+        }
       }
-      if (await perform(state.channel, transcript, action)) acted++;
+
+      if (!wanted.length || abort.signal.aborted) break;
+      if (!urgent && round === 0) stopTyping = startTyping(state.channel);
+      for (const query of wanted.slice(0, 2)) {
+        log.info(`${state.place}: searching archive for "${query}"`);
+        searches.push(
+          `<search query="${query}">\n${searchArchive(state.id, query, transcript.refs.get(1))}\n</search>`
+        );
+      }
     }
 
     if (acted > 0 || urgent) {
@@ -180,6 +237,7 @@ async function run(state: ChannelState) {
     log.error(`run failed in ${state.id}`, error);
   } finally {
     stopTyping();
+    state.abort = undefined;
     state.running = false;
     if (state.rerun) schedule(state, state.urgent);
   }
@@ -224,10 +282,10 @@ async function perform(
   channel: SendableChannels,
   transcript: Transcript,
   action: Action
-): Promise<boolean> {
+): Promise<string | undefined> {
   try {
     const text = clean(action.text);
-    if (!text) return false;
+    if (!text) return;
     const [first, ...rest] = chunks(text);
     const target =
       action.type === 'reply'
@@ -244,9 +302,9 @@ async function perform(
       await channel.send({ content: first!, allowedMentions });
     }
     for (const part of rest) await channel.send({ content: part, allowedMentions });
-    return true;
+    return text;
   } catch (error) {
     log.warn(`failed to ${action.type}`, error);
-    return false;
+    return;
   }
 }

@@ -16,9 +16,12 @@ How you act:
 - You answer with a list of actions. Each action is one of:
   - reply: a Discord reply to message #to (use this for the first message when answering someone specific)
   - send: a plain message in the channel (follow-up lines, or when replying isn't needed)
+  - search: look through everything ever said in this channel. text = a few keywords, add from:name to only get one person's messages (e.g. "minecraft server from:alex"). You get the results back and then act again.
 - Each reply/send is ONE short discord message. Several short messages beats one long one, like how people actually text.
 - NEVER use emojis. Not in messages, not as reactions, not ever. Plain text only (custom server emotes count too).
 - An empty list means you stay quiet. That's often the right call.
+- You remember the whole channel history through search. Use it when someone brings up something old, asks "remember when", asks what someone said before, or when digging up someone's old embarrassing messages would be funny. You can send a "hold on" type message before a search, but don't search for no reason, it's slower.
+- If someone talks while you're in the middle of saying something, they interrupted you and you got cut off. You HATE being interrupted. Get visibly pissed about it, call them out by name, complain that you were talking, then maybe finish your thought (or refuse to now).
 - To ping someone write <@user_id> only if you really need to; otherwise just say their name.
 
 Never EVER prefix messages with "gork:", "AI:", timestamps, #numbers or (Replying to ...). Just the message itself.
@@ -194,7 +197,29 @@ export function contextPrompt(opts: {
   time: string;
   transcript: string;
   pinged: boolean;
+  interrupted: string[];
+  searches: string[];
+  said: string[];
+  canSearch: boolean;
 }) {
+  const notes: string[] = [];
+  if (opts.interrupted.length) {
+    notes.push(
+      `${[...new Set(opts.interrupted)].join(' and ')} just INTERRUPTED you while you were talking (marked [interrupted you]). You're angry about it.`
+    );
+  } else if (opts.pinged) {
+    notes.push('Someone pinged you in the new messages, so answer them.');
+  } else {
+    notes.push('Nobody pinged you. Only talk if you actually want to.');
+  }
+  if (opts.said.length) {
+    notes.push(
+      `You already sent these this turn, don't repeat them:\n${opts.said.map((s) => `- ${s}`).join('\n')}`
+    );
+  }
+  if (opts.searches.length && !opts.canSearch) {
+    notes.push('No more searching, act with what you have.');
+  }
   return `\
 <context>
 Where: ${opts.place}${opts.topic ? `\nChannel topic: ${opts.topic}` : ''}
@@ -204,7 +229,7 @@ Time: ${opts.time} (${location})
 <transcript>
 ${opts.transcript}
 </transcript>
-
-${opts.pinged ? 'Someone pinged you in the new messages, so answer them.' : 'Nobody pinged you. Only talk if you actually want to.'}
+${opts.searches.length ? `\n<archive-results>\n${opts.searches.join('\n\n')}\n</archive-results>\n` : ''}
+${notes.join('\n')}
 Decide what to do now.`;
 }

@@ -4,6 +4,7 @@ import {
   type PartialMessage,
   type TextBasedChannel,
 } from 'discord.js';
+import { archiveMessage, archiveRecent, unarchive } from './archive';
 import { history as cfg, timezone } from './config';
 import { logger } from './log';
 
@@ -164,10 +165,12 @@ export class ChannelLog {
     this.backfilled ??= (async () => {
       const started = Date.now();
       const fetched = await channel.messages.fetch({ limit: cfg.backfill });
-      for (const m of [...fetched.values()].reverse()) {
-        if (m.content.startsWith('//')) continue;
-        if (!this.byId.has(m.id)) this.add(toChatMsg(m));
-      }
+      const msgs = [...fetched.values()]
+        .filter((m) => !m.content.startsWith('//'))
+        .sort((a, b) => cmpId(a.id, b.id))
+        .map(toChatMsg);
+      for (const m of msgs) if (!this.byId.has(m.id)) this.add(m);
+      archiveRecent(channel, msgs);
       log.debug(
         `backfilled ${fetched.size} msgs in ${channel.id} (${Date.now() - started}ms)`
       );
@@ -205,23 +208,27 @@ export function recordMessage(message: Message): ChatMsg | undefined {
   if (message.content.startsWith('//')) return;
   const msg = toChatMsg(message);
   channelLog(message.channelId).add(msg);
+  archiveMessage(message.channelId, msg);
   return msg;
 }
 
 export function recordEdit(message: Message | PartialMessage) {
   if (message.partial) return;
-  const log = peekLog(message.channelId);
-  if (!log?.byId.has(message.id)) return;
   if (message.content.startsWith('//')) {
     recordDelete(message.channelId, message.id);
     return;
   }
-  log.add(toChatMsg(message));
+  const msg = toChatMsg(message);
+  archiveMessage(message.channelId, msg);
+  const log = peekLog(message.channelId);
+  if (log?.byId.has(message.id)) log.add(msg);
 }
 
 export function recordDelete(channelId: string, id: string) {
   const msg = peekLog(channelId)?.byId.get(id);
   if (msg) msg.deleted = true;
+  // deleted means deleted, gork forgets it too
+  unarchive(id);
 }
 
 export function recordReaction(
@@ -267,7 +274,10 @@ export interface Transcript {
  * Render the channel as a numbered transcript the model can read top to bottom.
  * Messages after `lastSeenId` are marked as new so gork knows what he hasn't reacted to yet.
  */
-export function renderTranscript(log: ChannelLog): Transcript {
+export function renderTranscript(
+  log: ChannelLog,
+  interruptedBy: ReadonlySet<string> = new Set()
+): Transcript {
   const visible = log.messages.filter((m) => !m.deleted);
   const window: ChatMsg[] = [];
   let chars = 0;
@@ -331,6 +341,7 @@ export function renderTranscript(log: ChannelLog): Transcript {
     const body = isNew ? m.content : clip(m.content, 600);
     const tags: string[] = [];
     if (m.mentionsSelf && !m.self) tags.push('pinged you');
+    if (interruptedBy.has(m.id)) tags.push('interrupted you');
     if (m.edited) tags.push('edited');
     for (const a of m.attachments) {
       const isImage = a.type.startsWith('image/');

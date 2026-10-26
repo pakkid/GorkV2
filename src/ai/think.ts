@@ -21,7 +21,7 @@ const reasoning =
 
 // flat + nullable instead of a union so strict json-schema providers accept it
 export const actionSchema = z.object({
-  type: z.enum(['reply', 'send']),
+  type: z.enum(['reply', 'send', 'search']),
   to: z
     .number()
     .int()
@@ -29,7 +29,7 @@ export const actionSchema = z.object({
     .describe('transcript #number of the target message (reply), null for send'),
   text: z
     .string()
-    .describe('the message text'),
+    .describe('the message text, or the keywords to search for'),
 });
 
 export type Action = z.infer<typeof actionSchema>;
