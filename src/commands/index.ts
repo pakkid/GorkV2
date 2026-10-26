@@ -88,7 +88,7 @@ function scopedSetting<T extends string>(opts: {
       const effective = opts.get(guildId, interaction.channelId);
       return interaction.reply({
         content: [
-          `server: **${server ? opts.labels[server] : 'default'}**`,
+          `server: **${server ? opts.labels[server] : `default (${opts.labels[opts.get(guildId, '')]})`}**`,
           `this channel: **${channel ? opts.labels[channel] : 'inherits server'}**`,
           `effective here: **${opts.labels[effective]}**`,
         ].join('\n'),
@@ -152,6 +152,9 @@ const shutup = {
     .setName('shutup')
     .setDescription('Tell gork to stop talking in this channel (pings still work)'),
   async execute(interaction: ChatInputCommandInteraction) {
+    if (!canEdit(interaction)) {
+      return interaction.reply({ content: 'u cant tell me what to do', flags: ephemeral });
+    }
     if (settings.isSilenced(interaction.channelId)) {
       return interaction.reply({
         content: 'already shut up. ping me if u want me back',

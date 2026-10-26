@@ -20,7 +20,7 @@ import {
   recordReaction,
 } from './history';
 import { logger } from './log';
-import { settings } from './settings';
+import { modeOf } from './settings';
 
 const log = logger('core');
 
@@ -56,7 +56,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
   try {
     if (message.partial) message = await message.fetch();
     // channels set to none are invisible to gork: not read, not archived
-    if (settings.mode(message.guildId, message.channelId) === 'none') return;
+    if (modeOf(message) === 'none') return;
     const msg = recordMessage(message);
     if (!msg || message.author.bot || msg.self) return;
     onMessage(message, msg);
@@ -66,7 +66,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
 });
 
 client.on(Events.MessageUpdate, (_old, message) => {
-  if (settings.mode(message.guildId, message.channelId) === 'none') return;
+  if (modeOf(message) === 'none') return;
   recordEdit(message);
 });
 client.on(Events.MessageDelete, (message) => recordDelete(message.channelId, message.id));

@@ -10,7 +10,7 @@ import {
   type Transcript,
 } from './history';
 import { logger } from './log';
-import { settings } from './settings';
+import { modeOf, settings } from './settings';
 
 const log = logger('brain');
 
@@ -93,7 +93,7 @@ export function onMessage(message: Message, msg: ChatMsg) {
   }
 
   const isDM = !message.guild;
-  const mode = settings.mode(message.guildId, message.channelId);
+  const mode = modeOf(message);
   if (mode === 'none') return;
 
   const lower = message.content.toLowerCase();

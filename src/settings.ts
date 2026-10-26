@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import type { Message, PartialMessage } from 'discord.js';
 import { join } from 'node:path';
 import { env } from './env';
 import { logger } from './log';
@@ -45,19 +46,26 @@ function resolve<T>(
   table: Record<string, T>,
   guildId: string | null | undefined,
   channelId: string,
-  fallback: T
+  fallback: T,
+  parentId?: string | null
 ): T {
   return (
     table[key('channel', channelId)] ??
+    // threads follow their parent channel
+    (parentId ? table[key('channel', parentId)] : undefined) ??
     (guildId ? table[key('guild', guildId)] : undefined) ??
     fallback
   );
 }
 
 export const settings = {
-  mode(guildId: string | null | undefined, channelId: string): ResponseMode {
-    if (!guildId) return 'relevance';
-    return resolve(data.mode, guildId, channelId, 'relevance');
+  // whitelist: every server channel starts off as 'none' until the owner turns it on
+  mode(
+    guildId: string | null | undefined,
+    channelId: string,
+    parentId?: string | null
+  ): ResponseMode {
+    return resolve(data.mode, guildId, channelId, 'none', parentId);
   },
   storedMode(scope: Scope, id: string): ResponseMode | undefined {
     return data.mode[key(scope, id)];
@@ -98,3 +106,15 @@ export const settings = {
     save();
   },
 };
+
+/** Effective mode for a message: whitelisted server channels, and DMs only with the owner. */
+export function modeOf(message: Message | PartialMessage): ResponseMode {
+  const { channel } = message;
+  if (!message.guildId) {
+    const other = channel.isDMBased() && 'recipientId' in channel ? channel.recipientId : undefined;
+    const owner = env.DISCORD_OWNER_ID;
+    return owner && (message.author?.id === owner || other === owner) ? 'relevance' : 'none';
+  }
+  const parentId = channel.isThread() ? channel.parentId : null;
+  return settings.mode(message.guildId, message.channelId, parentId);
+}

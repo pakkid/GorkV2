@@ -42,11 +42,13 @@ Plain Docker works the same: put the variables in `.env` and run `docker compose
 
 ## Commands
 
+Gork starts with **no channel access**. Whitelist a channel with `/mode set scope:Channel value:Relevance` (threads follow their parent channel), or a whole server with `scope:Server`. DMs only work with the bot owner. Settings commands need `DISCORD_OWNER_ID` set.
+
 | Command | What it does |
 |---|---|
 | `/mode set/show/clear` | When gork talks: `relevance` (he decides), `ping`, `ping+keyword`, `none` (bot owner only) |
 | `/safety set/show/clear` | `unfiltered` or `safe` (SFW) per server/channel (bot owner only) |
-| `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up |
+| `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up (bot owner only) |
 | `/ping` | latency check |
 
 Start a message with `//` to hide it from gork (it's never archived either). Deleted messages are removed from the archive.
