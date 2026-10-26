@@ -2,7 +2,6 @@ import {
   type ChatInputCommandInteraction,
   InteractionContextType,
   MessageFlags,
-  PermissionsBitField,
   SlashCommandBuilder,
   type SlashCommandStringOption,
 } from 'discord.js';
@@ -24,11 +23,9 @@ const modeLabels: Record<ResponseMode, string> = {
   none: 'none',
 };
 
+// only the bot owner (DISCORD_OWNER_ID) can change gork's settings
 function canEdit(interaction: ChatInputCommandInteraction) {
-  return (
-    interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild) ||
-    interaction.user.id === env.DISCORD_OWNER_ID
-  );
+  return !!env.DISCORD_OWNER_ID && interaction.user.id === env.DISCORD_OWNER_ID;
 }
 
 const scopeOption = (required: boolean) => (o: SlashCommandStringOption) =>
@@ -100,7 +97,7 @@ function scopedSetting<T extends string>(opts: {
     }
 
     if (!canEdit(interaction)) {
-      return interaction.reply({ content: 'only mods can change that', flags: ephemeral });
+      return interaction.reply({ content: 'nah only my owner gets to touch that', flags: ephemeral });
     }
     const scope = interaction.options.getString('scope', true) as Scope;
     const id = scope === 'guild' ? guildId : interaction.channelId;

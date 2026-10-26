@@ -44,8 +44,8 @@ Plain Docker works the same: put the variables in `.env` and run `docker compose
 
 | Command | What it does |
 |---|---|
-| `/mode set/show/clear` | When gork talks: `relevance` (he decides), `ping`, `ping+keyword`, `none` (mods only) |
-| `/safety set/show/clear` | `unfiltered` or `safe` (SFW) per server/channel (mods only) |
+| `/mode set/show/clear` | When gork talks: `relevance` (he decides), `ping`, `ping+keyword`, `none` (bot owner only) |
+| `/safety set/show/clear` | `unfiltered` or `safe` (SFW) per server/channel (bot owner only) |
 | `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up |
 | `/ping` | latency check |
 
