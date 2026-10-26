@@ -26,7 +26,7 @@ export const timing = {
   // wait this long after normal chatter before deciding whether to chime in
   idleDebounceMs: 1500,
   // give up on a model call after this long
-  timeoutMs: 30_000,
+  timeoutMs: 45_000,
 };
 
 export const limits = {

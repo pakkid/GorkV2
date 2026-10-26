@@ -1,0 +1,62 @@
+// Talk to gork's brain without discord: builds a fake channel, sends the real
+// prompt to the configured model and prints what he'd do.
+// usage: npm run try -- "gork whats 7 times 8"
+process.env.DISCORD_TOKEN ||= 'unused';
+process.env.DISCORD_CLIENT_ID ||= 'unused';
+process.env.DATA_DIR ||= 'data/try';
+
+const { contextPrompt, systemPrompt } = await import('../src/ai/prompt');
+const { think } = await import('../src/ai/think');
+const { env } = await import('../src/env');
+const { ChannelLog, renderTranscript } = await import('../src/history');
+
+const message = process.argv.slice(2).join(' ') || 'gork what do u think of my new haircut';
+const now = Date.now();
+const log = new ChannelLog();
+let id = 1000;
+const add = (name: string, content: string, opts: { self?: boolean; ping?: boolean } = {}) =>
+  log.add({
+    id: String(id++),
+    authorId: name,
+    name,
+    username: name.toLowerCase(),
+    bot: false,
+    self: !!opts.self,
+    content,
+    attachments: [],
+    extras: [],
+    reactions: new Map(),
+    mentionsSelf: !!opts.ping,
+    createdAt: now - (2000 - id) * 1000,
+    edited: false,
+    deleted: false,
+  });
+
+add('Alex', 'anyone up for minecraft tonight');
+add('Sam', 'ye after dinner');
+add('gork', 'minecraft is for people who peaked in 2011', { self: true });
+log.lastSeenId = String(id - 1);
+add('Alex', 'ok gork nobody asked');
+add('You', message, { ping: true });
+
+const transcript = renderTranscript(log);
+const prompt = contextPrompt({
+  place: 'the "test" Discord server, #general',
+  time: new Date().toString(),
+  transcript: transcript.text,
+  pinged: true,
+  interrupted: [],
+  searches: [],
+  said: [],
+  canSearch: true,
+});
+
+console.log(`model: ${env.AI_MODEL} via ${env.AI_PROVIDER} ${env.AI_BASE_URL ?? ''}\n`);
+console.log(transcript.text, '\n');
+const started = Date.now();
+let count = 0;
+for await (const action of think({ system: systemPrompt(false), prompt, images: [] })) {
+  count++;
+  console.log(`+${Date.now() - started}ms`, action.type, action.to ?? '', JSON.stringify(action.text));
+}
+console.log(`\n${count} actions in ${Date.now() - started}ms`);

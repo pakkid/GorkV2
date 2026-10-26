@@ -72,6 +72,7 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
 
   for (const [i, model] of models.entries()) {
     const started = Date.now();
+    const timeout = AbortSignal.timeout(timing.timeoutMs);
     let emitted = 0;
     let failure: unknown;
 
@@ -82,9 +83,7 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
       output: Output.array({ element: actionSchema, maxItems: 8 }),
       temperature: 0.9,
       maxRetries: 0,
-      abortSignal: input.signal
-        ? AbortSignal.any([input.signal, AbortSignal.timeout(timing.timeoutMs)])
-        : AbortSignal.timeout(timing.timeoutMs),
+      abortSignal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
       providerOptions,
       onError: ({ error }) => {
         failure = error;
@@ -102,6 +101,28 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
     }
 
     if (input.signal?.aborted) return;
+    // an abort from our own timeout ends the stream quietly, so it has to be called out
+    if (timeout.aborted) failure ??= new Error(`timed out after ${timing.timeoutMs / 1000}s`);
+
+    if (!failure && emitted === 0) {
+      // nothing came out of the stream: either a real "stay quiet" or output in a shape
+      // the strict parser didn't accept (code fences, bare array, renamed keys...)
+      const raw = await Promise.resolve(result.text).catch(() => '');
+      const parsed = parseLoose(raw);
+      if (parsed === undefined) {
+        failure = new Error(
+          raw.trim() ? `unreadable output: ${raw.trim().slice(0, 300)}` : 'empty output'
+        );
+      } else if (parsed.length) {
+        log.info(`${model}: recovered ${parsed.length} actions from loose output`);
+        for (const action of parsed) yield action;
+        return;
+      } else {
+        log.info(`${model} chose to stay quiet (${Date.now() - started}ms)`);
+        return;
+      }
+    }
+
     if (!failure) {
       log.debug(`${model} done: ${emitted} actions in ${Date.now() - started}ms`);
       return;
@@ -116,4 +137,39 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
       failure
     );
   }
+}
+
+/** Best-effort parse of model output that didn't match the schema exactly. undefined = not JSON at all. */
+function parseLoose(raw: string): Action[] | undefined {
+  const text = raw.replace(/```(?:json)?/gi, '').trim();
+  const start = text.search(/[[{]/);
+  if (start < 0) return undefined;
+  const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+  let data: unknown;
+  try {
+    data = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+
+  const obj = data as Record<string, unknown>;
+  const list = Array.isArray(data)
+    ? data
+    : (obj.elements ?? obj.actions ?? obj.messages ?? (obj.type ? [obj] : []));
+  if (!Array.isArray(list)) return undefined;
+
+  const out: Action[] = [];
+  for (const item of list) {
+    if (typeof item === 'string') {
+      out.push({ type: 'send', to: null, text: item });
+      continue;
+    }
+    const a = item as Record<string, unknown>;
+    const text = typeof a.text === 'string' ? a.text : typeof a.content === 'string' ? a.content : '';
+    if (!text) continue;
+    const type = a.type === 'reply' || a.type === 'search' ? a.type : 'send';
+    const to = Number(String(a.to ?? '').replace('#', ''));
+    out.push({ type, to: Number.isFinite(to) && to > 0 ? to : null, text });
+  }
+  return out;
 }
