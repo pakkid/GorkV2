@@ -5,3 +5,4 @@ logs
 .env*
 !.env.example
 .DS_Store
+commit-messages.txt
