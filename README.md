@@ -12,7 +12,7 @@ A rewrite of [gork](https://github.com/techwithanirudh/gork): a sarcastic, human
 | Context | 50 msgs, replies cut to 50 chars | up to 120 msgs, numbered transcript with reply links, edits, reactions, images, embeds, polls, forwards, and a "new since you last looked" marker |
 | Sending | waits for the whole answer | **each message is sent the moment it's generated** |
 | Bursts | one LLM call per message | messages are batched (250ms after a ping, 1.5s otherwise) and answered together |
-| Reply target | often wrong | model points at transcript `#numbers`, can reply to / react on any message |
+| Reply target | often wrong | model points at transcript `#numbers`, can reply to any message |
 | Memory | Pinecone vector memories | **every message in the channel**, archived to SQLite (`data/archive.db`) and crawled back to the channel's first message in the background; gork searches it himself when someone brings up old stuff |
 | Interruptions | ignored | talk over him mid-reply and he stops, then gets mad at you |
 | Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key; settings saved to `data/settings.json` |
