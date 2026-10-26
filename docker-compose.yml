@@ -3,7 +3,8 @@
 services:
   gork:
     build: .
-    image: gork:latest
+    # always build from the repo; there is no gork image on docker hub to pull
+    pull_policy: build
     container_name: gork
     restart: unless-stopped
     environment:

@@ -19,7 +19,7 @@ A rewrite of [gork](https://github.com/techwithanirudh/gork): a sarcastic, human
 
 ## Setup
 
-Needs Node 22+. [Create a bot](https://discord.com/developers/applications) and turn on the **Message Content** and **Server Members** intents.
+Needs Node 22+. [Create a bot](https://discord.com/developers/applications) and turn on the **Message Content** intent (Bot tab → Privileged Gateway Intents).
 
 ```bash
 npm install

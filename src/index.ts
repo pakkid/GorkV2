@@ -28,7 +28,6 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.DirectMessageReactions,
@@ -104,4 +103,20 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-await client.login(env.DISCORD_TOKEN);
+try {
+  await client.login(env.DISCORD_TOKEN);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/disallowed intents/i.test(message)) {
+    log.error(
+      'discord refused the connection: turn on "Message Content Intent" in the developer portal (Bot tab → Privileged Gateway Intents) and redeploy'
+    );
+  } else if (/invalid token/i.test(message)) {
+    log.error('DISCORD_TOKEN is wrong: reset it on the Bot tab of the developer portal');
+  } else {
+    log.error('login failed', error);
+  }
+  // don't hammer discord while the container restarts in a loop
+  await new Promise((r) => setTimeout(r, 30_000));
+  process.exit(1);
+}
