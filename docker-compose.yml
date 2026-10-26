@@ -14,8 +14,8 @@ services:
       AI_API_KEY: ${AI_API_KEY}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_PROVIDER: ${AI_PROVIDER:-}
-      AI_MODEL: ${AI_MODEL:-google/gemini-3-flash-preview}
-      AI_FALLBACK_MODELS: ${AI_FALLBACK_MODELS:-}
+      AI_MODEL: ${AI_MODEL:-deepseek/deepseek-v4.1-flash}
+      AI_FALLBACK_MODELS: ${AI_FALLBACK_MODELS:-minimax-m3.1-flash,z-ai/glm-5.3-flash}
       AI_REASONING: ${AI_REASONING:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}

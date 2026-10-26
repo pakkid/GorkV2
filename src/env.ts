@@ -9,7 +9,7 @@ const schema = z.object({
   AI_BASE_URL: z.url().optional(),
   // openrouter: OpenRouter or the Hack Club proxy. openai: any other OpenAI-compatible gateway
   AI_PROVIDER: z.enum(['openrouter', 'openai']).optional(),
-  AI_MODEL: z.string().min(1).default('google/gemini-3-flash-preview'),
+  AI_MODEL: z.string().min(1).default('deepseek/deepseek-v4.1-flash'),
   AI_FALLBACK_MODELS: z
     .string()
     .default('')
