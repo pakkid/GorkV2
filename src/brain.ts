@@ -4,6 +4,7 @@ import { type Action, think } from './ai/think';
 import { crawlChannel, searchArchive } from './archive';
 import { archive, keywords, limits, timezone, timing } from './config';
 import {
+  type ChannelLog,
   type ChatMsg,
   channelLog,
   renderTranscript,
@@ -208,7 +209,7 @@ async function run(state: ChannelState) {
         if (acted === 0) {
           log.info(`${state.place}: first message after ${Date.now() - started}ms`);
         }
-        const text = await perform(state.channel, transcript, action);
+        const text = await perform(state.channel, chLog, transcript, action);
         if (text) {
           acted++;
           state.spoke++;
@@ -278,13 +279,36 @@ async function resolveTarget(
   );
 }
 
+/**
+ * The model only knows display names, so "@alex" would show up as plain text.
+ * Turn @name / @username of anyone in the channel's history into a real <@id> ping.
+ */
+export function linkMentions(text: string, chLog: ChannelLog) {
+  const ids = new Map<string, string>();
+  for (const m of chLog.messages) {
+    if (m.self) continue;
+    ids.set(m.name.toLowerCase(), m.authorId);
+    ids.set(m.username.toLowerCase(), m.authorId);
+  }
+  if (!ids.size) return text;
+  const names = [...ids.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])@(${names.join('|')})(?![\\p{L}\\p{N}_])`, 'giu');
+  return text.replace(pattern, (match, name: string) => {
+    const id = ids.get(name.toLowerCase());
+    return id ? `<@${id}>` : match;
+  });
+}
+
 async function perform(
   channel: SendableChannels,
+  chLog: ChannelLog,
   transcript: Transcript,
   action: Action
 ): Promise<string | undefined> {
   try {
-    const text = clean(action.text);
+    const text = linkMentions(clean(action.text), chLog);
     if (!text) return;
     const [first, ...rest] = chunks(text);
     const target =
