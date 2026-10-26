@@ -81,7 +81,7 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
       system: input.system,
       messages: [{ role: 'user', content }],
       output: Output.array({ element: actionSchema, maxItems: 8 }),
-      temperature: 0.9,
+      temperature: 0.7,
       maxRetries: 0,
       abortSignal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
       providerOptions,
