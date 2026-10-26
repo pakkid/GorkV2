@@ -12,9 +12,10 @@ services:
       DISCORD_OWNER_ID: ${DISCORD_OWNER_ID:-}
       AI_API_KEY: ${AI_API_KEY}
       AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
       AI_MODEL: ${AI_MODEL:-google/gemini-3-flash-preview}
       AI_FALLBACK_MODELS: ${AI_FALLBACK_MODELS:-}
-      AI_REASONING: ${AI_REASONING:-minimal}
+      AI_REASONING: ${AI_REASONING:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
     volumes:

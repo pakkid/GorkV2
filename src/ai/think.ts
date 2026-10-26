@@ -1,5 +1,7 @@
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { Output, streamText, type UserContent } from 'ai';
+import type { SharedV4ProviderOptions } from '@ai-sdk/provider';
+import { type LanguageModel, Output, streamText, type UserContent } from 'ai';
 import { z } from 'zod';
 import { timing } from '../config';
 import { env } from '../env';
@@ -7,17 +9,32 @@ import { logger } from '../log';
 
 const log = logger('think');
 
-const openrouter = createOpenRouter({
-  apiKey: env.AI_API_KEY,
-  baseURL: env.AI_BASE_URL,
-});
+// the json shape is spelled out in the prompt, so "no structured outputs" warnings are noise
+(globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false;
 
 const models = [env.AI_MODEL, ...env.AI_FALLBACK_MODELS];
 
-const reasoning =
-  env.AI_REASONING === 'none'
-    ? { enabled: false }
-    : { effort: env.AI_REASONING };
+let modelFor: (id: string) => LanguageModel;
+let providerOptions: SharedV4ProviderOptions = {};
+
+if (env.AI_PROVIDER === 'openrouter') {
+  const openrouter = createOpenRouter({ apiKey: env.AI_API_KEY, baseURL: env.AI_BASE_URL });
+  modelFor = (id) => openrouter.chat(id);
+  const effort = env.AI_REASONING ?? 'minimal';
+  providerOptions = {
+    openrouter: { reasoning: effort === 'none' ? { enabled: false } : { effort } },
+  };
+} else {
+  const gateway = createOpenAICompatible({
+    name: 'gateway',
+    apiKey: env.AI_API_KEY,
+    baseURL: env.AI_BASE_URL ?? 'https://api.openai.com/v1',
+    includeUsage: true,
+  });
+  modelFor = (id) => gateway.chatModel(id);
+  // only sent when asked for; unknown gateways may reject it
+  if (env.AI_REASONING) providerOptions = { gateway: { reasoningEffort: env.AI_REASONING } };
+}
 
 // flat + nullable instead of a union so strict json-schema providers accept it
 export const actionSchema = z.object({
@@ -59,7 +76,7 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
     let failure: unknown;
 
     const result = streamText({
-      model: openrouter.chat(model),
+      model: modelFor(model),
       system: input.system,
       messages: [{ role: 'user', content }],
       output: Output.array({ element: actionSchema, maxItems: 8 }),
@@ -68,7 +85,7 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
       abortSignal: input.signal
         ? AbortSignal.any([input.signal, AbortSignal.timeout(timing.timeoutMs)])
         : AbortSignal.timeout(timing.timeoutMs),
-      providerOptions: { openrouter: { reasoning } },
+      providerOptions,
       onError: ({ error }) => {
         failure = error;
       },
