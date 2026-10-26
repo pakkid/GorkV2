@@ -1,0 +1,29 @@
+# Portainer: Stacks -> Add stack -> Repository, point it at this repo,
+# then fill in the environment variables below in the stack's env section.
+services:
+  gork:
+    build: .
+    image: gork:latest
+    container_name: gork
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_OWNER_ID: ${DISCORD_OWNER_ID:-}
+      AI_API_KEY: ${AI_API_KEY}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-google/gemini-3-flash-preview}
+      AI_FALLBACK_MODELS: ${AI_FALLBACK_MODELS:-}
+      AI_REASONING: ${AI_REASONING:-minimal}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - gork-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  gork-data:

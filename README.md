@@ -24,11 +24,21 @@ Needs Node 22+. [Create a bot](https://discord.com/developers/applications) and 
 ```bash
 npm install
 cp .env.example .env   # fill it in
-npm run deploy         # register slash commands (pass a guild id for instant updates)
 npm run dev
 ```
 
 Any OpenRouter-compatible endpoint works (`AI_BASE_URL`), including the Hack Club proxy. Pick a fast model with structured-output support; `AI_REASONING=minimal` keeps latency down.
+
+## Deploy with Portainer
+
+1. **Stacks → Add stack → Repository**
+2. Repository URL: this repo, reference `refs/heads/main`, compose path `docker-compose.yml`
+3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`). If the repo is private, turn on **Authentication** with a GitHub token.
+4. Deploy. Slash commands register themselves on startup.
+
+Settings and the message archive live in the `gork-data` volume, so redeploys keep his memory. To update, hit **Pull and redeploy** on the stack (or enable GitOps auto-updates).
+
+Plain Docker works the same: put the variables in `.env` and run `docker compose up -d --build`.
 
 ## Commands
 

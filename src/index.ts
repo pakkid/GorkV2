@@ -10,6 +10,7 @@ import {
 import { onMessage } from './brain';
 import { commands } from './commands';
 import { activities, statuses } from './config';
+import { deployCommands } from './deploy-commands';
 import { env } from './env';
 import {
   peekLog,
@@ -46,6 +47,8 @@ function rotatePresence() {
 client.once(Events.ClientReady, (c) => {
   log.info(`logged in as ${c.user.tag} in ${c.guilds.cache.size} servers`);
   rotatePresence();
+  // keeps slash commands in sync on every start, so deploys need no extra step
+  deployCommands().catch((error) => log.warn('failed to register slash commands', error));
 });
 
 client.on(Events.MessageCreate, async (message: Message) => {
