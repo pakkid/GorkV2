@@ -301,6 +301,17 @@ export function linkMentions(text: string, chLog: ChannelLog) {
   });
 }
 
+/**
+ * Transcript #numbers mean nothing to people in discord. If one slips into a message,
+ * swap it for a jump link to the actual message.
+ */
+export function linkRefs(text: string, transcript: Transcript, channelId: string, guildId: string | null) {
+  return text.replace(/(?<![\p{L}\p{N}_&<])#(\d{1,4})(?!\d)/gu, (match, n: string) => {
+    const id = transcript.refs.get(Number(n));
+    return id ? `https://discord.com/channels/${guildId ?? '@me'}/${channelId}/${id}` : match;
+  });
+}
+
 async function perform(
   channel: SendableChannels,
   chLog: ChannelLog,
@@ -308,7 +319,8 @@ async function perform(
   action: Action
 ): Promise<string | undefined> {
   try {
-    const text = linkMentions(clean(action.text), chLog);
+    const guildId = 'guildId' in channel ? channel.guildId : null;
+    const text = linkRefs(linkMentions(clean(action.text), chLog), transcript, channel.id, guildId);
     if (!text) return;
     const [first, ...rest] = chunks(text);
     const target =
