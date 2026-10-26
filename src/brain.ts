@@ -187,8 +187,16 @@ async function run(state: ChannelState) {
 
 const prefix = /^\s*(?:\[#?\d+[^\]]*\]\s*)?(?:gork(?: \(you\))?\s*:\s*)/i;
 
+// gork doesn't do emojis, even if the model slips one in
+const emoji =
+  /<a?:\w+:\d+>|[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}\u{1F3FB}-\u{1F3FF}]/gu;
+
 function clean(text: string) {
-  return text.replace(prefix, '').trim();
+  return text
+    .replace(prefix, '')
+    .replace(emoji, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 function chunks(text: string) {
@@ -218,15 +226,7 @@ async function perform(
   action: Action
 ): Promise<boolean> {
   try {
-    if (action.type === 'react') {
-      if (!action.emoji) return false;
-      const target = await resolveTarget(channel, transcript, action.to);
-      if (!target) return false;
-      await target.react(action.emoji.trim());
-      return true;
-    }
-
-    const text = clean(action.text ?? '');
+    const text = clean(action.text);
     if (!text) return false;
     const [first, ...rest] = chunks(text);
     const target =
