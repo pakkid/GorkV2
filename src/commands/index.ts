@@ -13,6 +13,7 @@ import { limits, memory as memoryCfg } from '../config';
 import { formatTime } from '../history';
 import { logger } from '../log';
 import { forgetAll, notes, rebuildNotes } from '../memory';
+import { backfillHistory } from '../stats';
 import { env } from '../env';
 import {
   type ResponseMode,
@@ -299,10 +300,16 @@ const memory = {
             )
           )
         );
+        // the re-downloaded archive may hold more of gork's old messages than before
+        backfillHistory(interaction.client.user.id, (id) => {
+          const ch = interaction.client.channels.cache.get(id);
+          return ch && 'guildId' in ch ? ch.guildId : null;
+        });
         const msgs = latestMessages(ids, memoryCfg.rebuildMessages);
         const names = new Map(channels.map((c) => [c.id, 'name' in c && c.name ? c.name : 'dm']));
         const count = await rebuildNotes(
           scope,
+          interaction.guildId,
           msgs,
           (id) => names.get(id) ?? 'channel',
           (part, parts) => status(`rebuilding notes from ${msgs.length} messages: part ${part}/${parts}`)

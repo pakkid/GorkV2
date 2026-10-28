@@ -83,6 +83,7 @@ export function notes(scope: string, limit = cfg.inPrompt) {
  */
 export async function rebuildNotes(
   scope: string,
+  guildId: string | null,
   msgs: ArchivedMsg[],
   channelName: (id: string) => string,
   onProgress?: (part: number, parts: number) => void
@@ -107,7 +108,7 @@ export async function rebuildNotes(
     onProgress?.(i + 1, chunks.length);
     const prompt = notesPrompt({ notes: notes(scope, cfg.maxNotes), chat, part: i + 1, parts: chunks.length });
     try {
-      for await (const action of think({ system: notesSystem, prompt, images: [] })) {
+      for await (const action of think({ system: notesSystem, prompt, images: [], where: { kind: 'notes', guildId } })) {
         if (action.type === 'remember') remember(scope, action.text);
         else if (action.type === 'forget' && action.to) forget(scope, Number(action.to));
       }

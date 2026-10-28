@@ -17,6 +17,7 @@ services:
       AI_MODEL: ${AI_MODEL:-deepseek/deepseek-v4.1-flash}
       AI_FALLBACK_MODELS: ${AI_FALLBACK_MODELS:-minimax-m3.1-flash,z-ai/glm-5.3-flash}
       AI_REASONING: ${AI_REASONING:-}
+      AI_PRICES: ${AI_PRICES:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
       WEB_PORT: 8787

@@ -6,6 +6,7 @@ import { memory as cfg } from '../config';
 import { env } from '../env';
 import { logger } from '../log';
 import { deleteNote, editNote, forgetAll, noteScopes, notes, remember } from '../memory';
+import { summary } from '../stats';
 
 const log = logger('web');
 const page = readFileSync(new URL('./index.html', import.meta.url));
@@ -68,6 +69,39 @@ function scopeName(client: Client, id: string) {
   return `unknown (${id})`;
 }
 
+function channelName(client: Client, id: string) {
+  const ch = client.channels.cache.get(id);
+  if (!ch) return { name: `unknown (${id})`, server: null };
+  if (ch.isDMBased()) return { name: scopeName(client, id), server: null };
+  return { name: `#${ch.name}`, server: ch.guild.name };
+}
+
+// the archive queries scan a lot of rows, so the page gets a slightly stale answer
+const statsCache = new Map<string, { at: number; body: unknown }>();
+
+function stats(client: Client, scope: string, days: number) {
+  const key = `${scope}:${days}`;
+  const hit = statsCache.get(key);
+  if (hit && Date.now() - hit.at < 30_000) return hit.body;
+  const guild = scope === 'all' ? undefined : client.guilds.cache.get(scope);
+  const data = summary(
+    {
+      since: Date.now() - days * 86_400_000,
+      guildId: guild?.id,
+      channelIds: guild ? [...guild.channels.cache.keys()] : undefined,
+    },
+    client.user?.id ?? '-'
+  );
+  const body = {
+    ...data,
+    days,
+    topChannels: data.topChannels.map((c) => ({ ...c, ...channelName(client, c.id) })),
+    servers: [...client.guilds.cache.values()].map((g) => ({ id: g.id, name: g.name })),
+  };
+  statsCache.set(key, { at: Date.now(), body });
+  return body;
+}
+
 async function handle(client: Client, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
@@ -86,6 +120,13 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
 
   // writes need a header a cross-site form or fetch can't send without a preflight we never allow
   if (method !== 'GET' && req.headers['x-gork'] !== '1') return send(res, 403, { error: 'forbidden' });
+
+  if (method === 'GET' && url.pathname === '/api/stats') {
+    const scope = url.searchParams.get('scope') ?? 'all';
+    if (scope !== 'all' && !/^\d+$/.test(scope)) return send(res, 400, { error: 'bad scope' });
+    const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
+    return send(res, 200, stats(client, scope, days));
+  }
 
   if (method === 'GET' && url.pathname === '/api/scopes') {
     const counts = new Map(noteScopes().map((s) => [s.scope, s.n]));
@@ -140,7 +181,7 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
   return send(res, 404, { error: 'not found' });
 }
 
-/** Memory editor on WEB_PORT, for devices on the local network only. */
+/** Stats page and memory editor on WEB_PORT, for devices on the local network only. */
 export function startWeb(client: Client) {
   if (!env.WEB_PORT) return;
   const server = createServer((req, res) => {
@@ -155,5 +196,5 @@ export function startWeb(client: Client) {
     });
   });
   server.on('error', (error) => log.error(`web ui couldn't start on port ${env.WEB_PORT}`, error));
-  server.listen(env.WEB_PORT, () => log.info(`memory editor on http://<this machine's lan ip>:${env.WEB_PORT}`));
+  server.listen(env.WEB_PORT, () => log.info(`stats + memory editor on http://<this machine's lan ip>:${env.WEB_PORT}`));
 }

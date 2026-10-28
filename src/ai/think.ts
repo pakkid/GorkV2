@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { timing } from '../config';
 import { env } from '../env';
 import { logger } from '../log';
+import { recordUsage, type Where } from '../stats';
 
 const log = logger('think');
 
@@ -19,7 +20,8 @@ let providerOptions: SharedV4ProviderOptions = {};
 
 if (env.AI_PROVIDER === 'openrouter') {
   const openrouter = createOpenRouter({ apiKey: env.AI_API_KEY, baseURL: env.AI_BASE_URL });
-  modelFor = (id) => openrouter.chat(id);
+  // usage accounting puts the real $ cost of each call in the response
+  modelFor = (id) => openrouter.chat(id, { usage: { include: true } });
   const effort = env.AI_REASONING ?? 'minimal';
   providerOptions = {
     openrouter: { reasoning: effort === 'none' ? { enabled: false } : { effort } },
@@ -56,6 +58,47 @@ export interface ThinkInput {
   prompt: string;
   images: { url: string; id: string }[];
   signal?: AbortSignal;
+  // what the call was for, for the stats page
+  where?: Where;
+}
+
+type Streamed = ReturnType<typeof streamText>;
+
+// never wait long on bookkeeping
+const settle = <T>(p: PromiseLike<T>) =>
+  Promise.race([
+    Promise.resolve(p).catch(() => undefined),
+    new Promise<undefined>((r) => setTimeout(() => r(undefined), 5000)),
+  ]);
+
+// some gateways never report usage; ~4 characters a token is close enough for a dashboard
+const guessTokens = (chars: number) => Math.ceil(chars / 4);
+
+async function track(
+  result: Streamed,
+  input: ThinkInput,
+  model: string,
+  started: number,
+  ok: boolean
+) {
+  const [usage, meta, text] = await Promise.all([
+    settle(result.usage),
+    settle(result.providerMetadata),
+    settle(result.text),
+  ]);
+  const cost = (meta?.openrouter as { usage?: { cost?: number } } | undefined)?.usage?.cost;
+  const estimated = usage?.inputTokens == null;
+  recordUsage(input.where ?? { kind: 'chat' }, {
+    model,
+    input: usage?.inputTokens ?? guessTokens(input.system.length + input.prompt.length),
+    output: usage?.outputTokens ?? guessTokens(text?.length ?? 0),
+    estimated,
+    cached: usage?.inputTokenDetails?.cacheReadTokens ?? 0,
+    reasoning: usage?.outputTokenDetails?.reasoningTokens ?? 0,
+    cost: typeof cost === 'number' ? cost : undefined,
+    ms: Date.now() - started,
+    ok,
+  });
 }
 
 /**
@@ -100,9 +143,10 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
       failure ??= error;
     }
 
-    if (input.signal?.aborted) return;
     // an abort from our own timeout ends the stream quietly, so it has to be called out
     if (timeout.aborted) failure ??= new Error(`timed out after ${timing.timeoutMs / 1000}s`);
+    void track(result, input, model, started, !failure);
+    if (input.signal?.aborted) return;
 
     if (!failure && emitted === 0) {
       // nothing came out of the stream: either a real "stay quiet" or output in a shape

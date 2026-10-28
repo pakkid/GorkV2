@@ -81,6 +81,16 @@ export const activities: { type: ActivityType; name: string }[] = [
   { type: ActivityType.Playing, name: 'in the gym' },
 ];
 
+// $ per million tokens [input, output], for estimating cost when the provider doesn't
+// report it (OpenRouter does). AI_PRICES in the env adds to / overrides this.
+// deepseek: worked out from the eclipsesystems gateway's own estimated_cost (oct 2026);
+// the other two are the vendors' list prices
+export const prices: Record<string, [number, number]> = {
+  'deepseek/deepseek-v4.1-flash': [0.06, 0.18],
+  'minimax-m3.1-flash': [0.15, 0.6],
+  'z-ai/glm-5.3-flash': [0.15, 0.5],
+};
+
 // long-term memory: every message gork sees is saved to data/archive.db
 export const archive = {
   // walk back through each active channel's entire history in the background

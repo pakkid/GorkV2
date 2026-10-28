@@ -40,9 +40,12 @@ Settings and the message archive live in the `gork-data` volume, so redeploys ke
 
 Plain Docker works the same: put the variables in `.env` and run `docker compose up -d --build`.
 
-## Memory editor
+## Stats and memory editor
 
-Gork serves a small web page for reading, adding, editing and deleting his notes on port `8787` (`WEB_PORT`, `0` turns it off). Open `http://<server's LAN ip>:8787`.
+Gork serves a small web page on port `8787` (`WEB_PORT`, `0` turns it off). Open `http://<server's LAN ip>:8787`.
+
+- **Stats**: API cost, tokens, model calls, messages he sent, how often he talks, the people and channels with the most messages, and a per-model breakdown, per server and time range. Cost comes from OpenRouter when it reports it; otherwise from the price table in `src/config.ts` (the default models are filled in), which `AI_PRICES` (`model=in/out,...` in $ per million tokens) can add to or override. Gateways that don't report token counts while streaming get estimates from text length, marked as estimated. On every start, usage from before tracking existed is estimated from gork's own messages in the archive (calls where he stayed quiet left no trace, so that part is a lower bound).
+- **Memory**: read, add, edit and delete his notes.
 
 It's LAN only: requests from anything other than a private, loopback or link-local address are refused, as are requests whose `Host` isn't an ip, `localhost`, a bare hostname or a `.local`/`.lan`/`.home.arpa`/`.internal` name. There's no password, so anyone on your network can use it. In Docker, set `WEB_BIND` to the host's LAN ip so the port isn't published on other interfaces either. Don't put it behind a reverse proxy on the same machine: everything would look local.
 

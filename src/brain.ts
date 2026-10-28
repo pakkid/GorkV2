@@ -15,6 +15,7 @@ import { logger } from './log';
 import { mentionNames, roster } from './members';
 import { forget, notes, remember } from './memory';
 import { modeOf, settings } from './settings';
+import { recordSent, recordTurn } from './stats';
 
 const log = logger('brain');
 
@@ -217,6 +218,7 @@ async function run(state: ChannelState) {
         }),
         images: round === 0 ? transcript.images : [],
         signal: abort.signal,
+        where: { kind: 'chat', guildId: state.guildId, channelId: state.id },
       })) {
         if (abort.signal.aborted) break;
         if (action.type === 'search') {
@@ -262,6 +264,7 @@ async function run(state: ChannelState) {
       }
     }
 
+    recordTurn(state.guildId, state.id, urgent, acted > 0);
     if (acted > 0 || urgent) {
       state.quietStreak = 0;
     } else if (++state.quietStreak >= limits.maxQuietStreak) {
@@ -424,7 +427,11 @@ async function perform(
     } else {
       await channel.send({ content: first!, allowedMentions: allowedMentions(first!) });
     }
-    for (const part of rest) await channel.send({ content: part, allowedMentions: allowedMentions(part) });
+    recordSent(guildId, channel.id, target ? 'reply' : 'send');
+    for (const part of rest) {
+      await channel.send({ content: part, allowedMentions: allowedMentions(part) });
+      recordSent(guildId, channel.id, 'send');
+    }
     return text;
   } catch (error) {
     log.warn(`failed to ${action.type}`, error);
