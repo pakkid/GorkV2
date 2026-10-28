@@ -353,8 +353,10 @@ export function renderTranscript(
   let chars = 0;
   for (let i = visible.length - 1; i >= 0; i--) {
     const m = visible[i]!;
-    chars += m.content.length + 80;
-    if (window.length >= cfg.contextMessages || chars > cfg.contextChars) break;
+    // older messages get clipped to 600 chars when rendered, so count them that way
+    chars += Math.min(m.content.length, 600) + 80;
+    if (window.length >= cfg.contextMessages) break;
+    if (chars > cfg.contextChars && window.length >= cfg.minContextMessages) break;
     window.unshift(m);
   }
 

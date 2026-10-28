@@ -1,8 +1,11 @@
 import { ActivityType, type PresenceStatusData } from 'discord.js';
 
 export const keywords = ['gork', 'grok'];
-export const timezone = 'America/New_York';
-export const location = 'New York, USA';
+// where gork lives: his clock (transcript times, "it's 5am") and where he says he's from.
+// TZ / GORK_LOCATION in the env; set them to wherever the server's people actually are
+export const timezone =
+  process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
+export const location = process.env.GORK_LOCATION || 'New York, USA';
 
 // how much chat gork keeps in his head per channel
 export const history = {
@@ -12,6 +15,8 @@ export const history = {
   backfill: 100,
   // messages shown to the model each turn
   contextMessages: 120,
+  // ...and never fewer than this, even when walls of text hit the char cap below
+  minContextMessages: 50,
   // hard cap on transcript size so huge walls of text don't blow up latency
   contextChars: 40_000,
   // channels kept in memory before the least recently used is dropped

@@ -33,7 +33,7 @@ Any OpenRouter-compatible endpoint works (`AI_BASE_URL`), including the Hack Clu
 
 1. **Stacks → Add stack → Repository**
 2. Repository URL: this repo, reference `refs/heads/main`, compose path `docker-compose.yml`
-3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`). If the repo is private, turn on **Authentication** with a GitHub token.
+3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`, `GORK_LOCATION`). If the repo is private, turn on **Authentication** with a GitHub token.
 4. Deploy. Slash commands register themselves on startup.
 
 Settings and the message archive live in the `gork-data` volume, so redeploys keep his memory. To update, hit **Pull and redeploy** on the stack (or enable GitOps auto-updates).

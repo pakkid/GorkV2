@@ -19,7 +19,9 @@ services:
       AI_REASONING: ${AI_REASONING:-}
       AI_PRICES: ${AI_PRICES:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # gork's clock and hometown. match these to where your server's people are
       TZ: ${TZ:-America/New_York}
+      GORK_LOCATION: ${GORK_LOCATION:-New York, USA}
       WEB_PORT: 8787
     # memory editor web ui. set WEB_BIND to this host's LAN ip (e.g. 192.168.1.20) so it
     # only listens there; gork also refuses anything that isn't a private-network address
