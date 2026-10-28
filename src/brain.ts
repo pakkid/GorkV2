@@ -87,14 +87,13 @@ function stateFor(message: Message): ChannelState | undefined {
 
 /** Called for every human message gork can see. Decides if he should think about the channel. */
 export function onMessage(message: Message, msg: ChatMsg) {
-  // someone talked while gork was mid-thought after he'd already started talking
+  // someone talked while gork was partway through his messages. he still sends the rest
+  // (cutting them off lost things he'd promised, like pings); they just get marked as
+  // having talked over him, and the message is handled normally below
   const busy = states.get(message.channelId);
   if (busy?.abort && busy.spoke > 0 && !busy.abort.signal.aborted) {
-    log.info(`${busy.place}: ${msg.name} interrupted gork`);
+    log.info(`${busy.place}: ${msg.name} talked over gork`);
     busy.interruptedBy.push(msg.id);
-    busy.abort.abort();
-    schedule(busy, true);
-    return;
   }
 
   const isDM = !message.guild;
@@ -248,6 +247,8 @@ async function run(state: ChannelState) {
         spoken.add(key);
         if (acted === 0) {
           log.info(`${state.place}: first message after ${Date.now() - started}ms`);
+          // nobody saw "typing" while he decided whether to butt in, so type it out now
+          if (!urgent && !(await pace(state.channel, action.text, Date.now(), abort.signal))) break;
         } else if (!(await pace(state.channel, action.text, lastSent, abort.signal))) {
           break;
         }
