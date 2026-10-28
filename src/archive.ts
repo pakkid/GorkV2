@@ -5,13 +5,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { TextBasedChannel } from 'discord.js';
 import { archive as cfg } from './config';
 import { env } from './env';
-import { type ChatMsg, cmpId, formatTime, toChatMsg } from './history';
+import { type ChatMsg, ago, cmpId, formatTime, toChatMsg, untrusted, whoIs } from './history';
 import { logger } from './log';
 
 const log = logger('archive');
 
 mkdirSync(env.DATA_DIR, { recursive: true });
-const db = new DatabaseSync(join(env.DATA_DIR, 'archive.db'));
+export const db = new DatabaseSync(join(env.DATA_DIR, 'archive.db'));
 
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -62,8 +62,7 @@ function bodyOf(m: ChatMsg) {
 }
 
 function authorOf(m: ChatMsg) {
-  if (m.self) return 'gork';
-  return m.username.toLowerCase() === m.name.toLowerCase() ? m.name : `${m.name} (@${m.username})`;
+  return m.self ? 'gork' : whoIs(m);
 }
 
 const upsert = db.prepare(`
@@ -106,6 +105,10 @@ export function unarchive(id: string) {
   remove.run(id);
 }
 
+export function isArchived(id: string) {
+  return !!existsStmt.get(id);
+}
+
 // ---------------------------------------------------------------------------
 // full history crawl: walks each channel back to its first message, gently
 
@@ -119,16 +122,19 @@ const oldestStmt = db.prepare('SELECT MIN(created_at) t, id FROM messages WHERE 
 const existsStmt = db.prepare('SELECT 1 FROM messages WHERE id = ?');
 const olderStmt = db.prepare('SELECT 1 FROM messages WHERE channel_id = ? AND created_at < ? LIMIT 1');
 
-type Job = { channel: TextBasedChannel; run: () => Promise<void> };
+type Job = { key: string; channel: TextBasedChannel; run: () => Promise<void>; done: () => void };
 const queue: Job[] = [];
-const queued = new Set<string>();
+// key -> resolves when that job has finished (or failed)
+const queued = new Map<string, Promise<void>>();
 let crawling = false;
 
 function enqueue(key: string, channel: TextBasedChannel, run: () => Promise<void>) {
-  if (queued.has(key)) return;
-  queued.add(key);
-  queue.push({ channel, run });
+  const existing = queued.get(key);
+  if (existing) return existing;
+  const finished = new Promise<void>((done) => queue.push({ key, channel, run, done }));
+  queued.set(key, finished);
   void pump();
+  return finished;
 }
 
 async function pump() {
@@ -137,18 +143,65 @@ async function pump() {
   try {
     for (let job = queue.shift(); job; job = queue.shift()) {
       await job.run().catch((error) => log.warn(`crawl of ${job.channel.id} stopped`, error));
+      queued.delete(job.key);
+      job.done();
     }
   } finally {
     crawling = false;
   }
 }
 
-/** Queue a crawl of the channel's entire history (resumes where it left off). */
-export function crawlChannel(channel: TextBasedChannel) {
-  if (!cfg.crawl) return;
+/**
+ * Queue a crawl of the channel's entire history (resumes where it left off).
+ * Resolves once that crawl is finished. `force` crawls even with crawling turned off.
+ */
+export function crawlChannel(channel: TextBasedChannel, force = false): Promise<void> {
+  if (!cfg.crawl && !force) return Promise.resolve();
   const state = crawlGet.get(channel.id) as { done: number } | undefined;
-  if (state?.done) return;
-  enqueue(`crawl:${channel.id}`, channel, () => crawl(channel));
+  if (state?.done) return Promise.resolve();
+  return enqueue(`crawl:${channel.id}`, channel, () => crawl(channel));
+}
+
+// ---------------------------------------------------------------------------
+// maintenance, for /memory
+
+const wipeMessages = db.prepare('DELETE FROM messages WHERE channel_id = ?');
+const wipeCrawl = db.prepare('DELETE FROM crawl WHERE channel_id = ?');
+
+/** Forget everything archived in these channels so they can be crawled from scratch. */
+export function wipeArchive(channelIds: string[]) {
+  let removed = 0;
+  db.exec('BEGIN');
+  try {
+    for (const id of channelIds) {
+      removed += Number(wipeMessages.run(id).changes);
+      wipeCrawl.run(id);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return removed;
+}
+
+export interface ArchivedMsg {
+  id: string;
+  channel_id: string;
+  author: string;
+  body: string;
+  created_at: number;
+}
+
+/** The newest `limit` messages across these channels, oldest first. */
+export function latestMessages(channelIds: string[], limit: number): ArchivedMsg[] {
+  if (!channelIds.length) return [];
+  const stmt = db.prepare(`
+    SELECT id, channel_id, author, body, created_at FROM messages
+    WHERE channel_id IN (${channelIds.map(() => '?').join(',')})
+    ORDER BY created_at DESC LIMIT ?
+  `);
+  return (stmt.all(...channelIds, limit) as unknown as ArchivedMsg[]).reverse();
 }
 
 /**
@@ -291,7 +344,7 @@ export function searchArchive(channelId: string, query: string, skipAfter?: stri
       .map((r) => {
         seen.add(r.id);
         const mark = hitIds.has(r.id) ? '>> ' : '   ';
-        return `${mark}[${formatTime(r.created_at, true)} ${new Date(r.created_at).getFullYear()}] ${r.author}: ${r.body.slice(0, 400)}`;
+        return `${mark}[${r.id} ${formatTime(r.created_at, true)} ${new Date(r.created_at).getFullYear()}, ${ago(r.created_at)}] ${untrusted(r.author)}: ${untrusted(r.body.slice(0, 400))}`;
       });
     if (lines.length) blocks.push(lines.join('\n'));
   }

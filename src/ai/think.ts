@@ -38,15 +38,15 @@ if (env.AI_PROVIDER === 'openrouter') {
 
 // flat + nullable instead of a union so strict json-schema providers accept it
 export const actionSchema = z.object({
-  type: z.enum(['reply', 'send', 'search']),
+  type: z.enum(['reply', 'send', 'search', 'remember', 'forget']),
+  // a string: discord ids are too big for a js number
   to: z
-    .number()
-    .int()
+    .string()
     .nullable()
-    .describe('transcript #number of the target message (reply), null for send'),
+    .describe('message id to reply to (reply), memory note number (forget), null otherwise'),
   text: z
     .string()
-    .describe('the message text, or the keywords to search for'),
+    .describe('the message text, the keywords to search for, or the note to remember'),
 });
 
 export type Action = z.infer<typeof actionSchema>;
@@ -54,7 +54,7 @@ export type Action = z.infer<typeof actionSchema>;
 export interface ThinkInput {
   system: string;
   prompt: string;
-  images: { url: string; ref: number }[];
+  images: { url: string; id: string }[];
   signal?: AbortSignal;
 }
 
@@ -66,7 +66,7 @@ export interface ThinkInput {
 export async function* think(input: ThinkInput): AsyncGenerator<Action> {
   const content: UserContent = [{ type: 'text', text: input.prompt }];
   for (const img of input.images) {
-    content.push({ type: 'text', text: `(image from #${img.ref})` });
+    content.push({ type: 'text', text: `(image from message ${img.id})` });
     content.push({ type: 'image', image: new URL(img.url) });
   }
 
@@ -141,7 +141,11 @@ export async function* think(input: ThinkInput): AsyncGenerator<Action> {
 
 /** Best-effort parse of model output that didn't match the schema exactly. undefined = not JSON at all. */
 function parseLoose(raw: string): Action[] | undefined {
-  const text = raw.replace(/```(?:json)?/gi, '').trim();
+  const text = raw
+    .replace(/```(?:json)?/gi, '')
+    // a bare snowflake loses digits in JSON.parse, so quote it first
+    .replace(/("to"\s*:\s*)(\d{15,})/g, '$1"$2"')
+    .trim();
   const start = text.search(/[[{]/);
   if (start < 0) return undefined;
   const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
@@ -166,10 +170,10 @@ function parseLoose(raw: string): Action[] | undefined {
     }
     const a = item as Record<string, unknown>;
     const text = typeof a.text === 'string' ? a.text : typeof a.content === 'string' ? a.content : '';
-    if (!text) continue;
-    const type = a.type === 'reply' || a.type === 'search' ? a.type : 'send';
-    const to = Number(String(a.to ?? '').replace('#', ''));
-    out.push({ type, to: Number.isFinite(to) && to > 0 ? to : null, text });
+    const type = (['reply', 'search', 'remember', 'forget'] as const).find((t) => t === a.type) ?? 'send';
+    if (!text && type !== 'forget') continue;
+    const to = String(a.to ?? '').replace(/^#/, '').trim();
+    out.push({ type, to: /^\d+$/.test(to) ? to : null, text });
   }
   return out;
 }

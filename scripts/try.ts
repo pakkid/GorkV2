@@ -16,7 +16,7 @@ const log = new ChannelLog();
 let id = 1000;
 const add = (name: string, content: string, opts: { self?: boolean; ping?: boolean } = {}) =>
   log.add({
-    id: String(id++),
+    id: String(1300000000000000000n + BigInt(id++)),
     authorId: name,
     name,
     username: name.toLowerCase(),
@@ -35,7 +35,7 @@ const add = (name: string, content: string, opts: { self?: boolean; ping?: boole
 add('Alex', 'anyone up for minecraft tonight');
 add('Sam', 'ye after dinner');
 add('gork', 'minecraft is for people who peaked in 2011', { self: true });
-log.lastSeenId = String(id - 1);
+log.lastSeenId = String(1300000000000000000n + BigInt(id - 1));
 add('Alex', 'ok gork nobody asked');
 add('You', message, { ping: true });
 
@@ -48,6 +48,10 @@ const prompt = contextPrompt({
   interrupted: [],
   searches: [],
   said: [],
+  recent: log.messages.filter((m) => m.self).map((m) => m.content),
+  members: 'Alex (@alex) <@111>\nSam (@sam) <@222>\nNikolai (Niko B, @niko.b) <@333>',
+  notes: [{ id: 1, text: 'alex hosts the minecraft server', created_at: now - 9 * 86_400_000 }],
+  now: Date.now(),
   canSearch: true,
 });
 

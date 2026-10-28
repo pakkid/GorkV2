@@ -20,6 +20,7 @@ import {
   recordReaction,
 } from './history';
 import { logger } from './log';
+import { loadMembers } from './members';
 import { modeOf } from './settings';
 
 const log = logger('core');
@@ -27,6 +28,7 @@ const log = logger('core');
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.DirectMessages,
@@ -47,6 +49,10 @@ function rotatePresence() {
 client.once(Events.ClientReady, (c) => {
   log.info(`logged in as ${c.user.tag} in ${c.guilds.cache.size} servers`);
   rotatePresence();
+  // one at a time, discord rate limits member chunk requests
+  void (async () => {
+    for (const guild of c.guilds.cache.values()) await loadMembers(guild);
+  })();
   // keeps slash commands in sync on every start, so deploys need no extra step
   deployCommands().catch((error) => log.warn('failed to register slash commands', error));
 });
@@ -92,7 +98,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.on(Events.GuildCreate, (guild) => log.info(`joined ${guild.name} (${guild.id})`));
+client.on(Events.GuildCreate, (guild) => {
+  log.info(`joined ${guild.name} (${guild.id})`);
+  void loadMembers(guild);
+});
 client.on(Events.GuildDelete, (guild) => log.info(`left ${guild.name} (${guild.id})`));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -109,7 +118,7 @@ try {
   const message = error instanceof Error ? error.message : String(error);
   if (/disallowed intents/i.test(message)) {
     log.error(
-      'discord refused the connection: turn on "Message Content Intent" in the developer portal (Bot tab → Privileged Gateway Intents) and redeploy'
+      'discord refused the connection: turn on "Message Content Intent" and "Server Members Intent" in the developer portal (Bot tab → Privileged Gateway Intents) and redeploy'
     );
   } else if (/invalid token/i.test(message)) {
     log.error('DISCORD_TOKEN is wrong: reset it on the Bot tab of the developer portal');

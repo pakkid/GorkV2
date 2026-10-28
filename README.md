@@ -13,13 +13,13 @@ A rewrite of [gork](https://github.com/techwithanirudh/gork): a sarcastic, human
 | Sending | waits for the whole answer | **each message is sent the moment it's generated** |
 | Bursts | one LLM call per message | messages are batched (250ms after a ping, 1.5s otherwise) and answered together |
 | Reply target | often wrong | model points at transcript `#numbers`, can reply to any message |
-| Memory | Pinecone vector memories | **every message in the channel**, archived to SQLite (`data/archive.db`) and crawled back to the channel's first message in the background; gork searches it himself when someone brings up old stuff |
+| Memory | Pinecone vector memories | **every message in the channel**, archived to SQLite (`data/archive.db`) and crawled back to the channel's first message in the background; gork searches it himself when someone brings up old stuff, and keeps his own notes about people (`remember`/`forget`) that he sees every turn |
 | Interruptions | ignored | talk over him mid-reply and he stops, then gets mad at you |
 | Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key; settings saved to `data/settings.json` |
 
 ## Setup
 
-Needs Node 22+. [Create a bot](https://discord.com/developers/applications) and turn on the **Message Content** intent (Bot tab → Privileged Gateway Intents).
+Needs Node 22+. [Create a bot](https://discord.com/developers/applications) and turn on the **Message Content** and **Server Members** intents (Bot tab → Privileged Gateway Intents).
 
 ```bash
 npm install
@@ -50,6 +50,9 @@ Gork starts with **no channel access**. Whitelist a channel with `/mode set scop
 | `/safety set/show/clear` | `unfiltered` or `safe` (SFW) per server/channel (bot owner only) |
 | `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up (bot owner only) |
 | `/ping` | latency check |
+| `/memory show` | list everything gork has noted about the server (bot owner only) |
+| `/memory wipe` | delete his notes; `archive:True` also deletes the archived chat of active channels (bot owner only) |
+| `/memory reinit` | re-download the full history of every active channel, then rebuild his notes from the last 20k messages. Slow, and costs a model call per ~30k chars (bot owner only) |
 
 Start a message with `//` to hide it from gork (it's never archived either). Deleted messages are removed from the archive.
 

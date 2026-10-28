@@ -1,8 +1,9 @@
-import type { Message, SendableChannels } from 'discord.js';
+import { setTimeout as sleep } from 'node:timers/promises';
+import type { Guild, Message, SendableChannels } from 'discord.js';
 import { contextPrompt, systemPrompt } from './ai/prompt';
 import { type Action, think } from './ai/think';
-import { crawlChannel, searchArchive } from './archive';
-import { archive, keywords, limits, timezone, timing } from './config';
+import { crawlChannel, isArchived, searchArchive } from './archive';
+import { archive, history, keywords, limits, timezone, timing } from './config';
 import {
   type ChannelLog,
   type ChatMsg,
@@ -11,6 +12,8 @@ import {
   type Transcript,
 } from './history';
 import { logger } from './log';
+import { mentionNames, roster } from './members';
+import { forget, notes, remember } from './memory';
 import { modeOf, settings } from './settings';
 
 const log = logger('brain');
@@ -177,6 +180,16 @@ async function run(state: ChannelState) {
     const said: string[] = [];
     const searches: string[] = [];
     let acted = 0;
+    let lastSent = 0;
+    const guild = 'guild' in state.channel ? state.channel.guild : null;
+    const scope = state.guildId ?? state.id;
+    const members = guild ? roster(guild, chLog).text : undefined;
+    const recent = chLog.messages
+      .filter((m) => m.self && !m.deleted)
+      .slice(-history.recentSelf)
+      .map((m) => m.content.replace(/\s+/g, ' ').slice(0, 160));
+    // anything gork already said here, normalized, so he can't post the same line twice
+    const spoken = new Set(chLog.messages.filter((m) => m.self).map((m) => normalize(m.content)));
 
     // gork can look things up in the channel archive, then think again with the results
     for (let round = 0; round <= archive.maxSearches; round++) {
@@ -196,6 +209,10 @@ async function run(state: ChannelState) {
             .filter((n): n is string => !!n),
           searches,
           said,
+          recent,
+          members,
+          notes: notes(scope),
+          now: Date.now(),
           canSearch,
         }),
         images: round === 0 ? transcript.images : [],
@@ -206,11 +223,29 @@ async function run(state: ChannelState) {
           if (canSearch && action.text.trim()) wanted.push(action.text.trim());
           continue;
         }
+        if (action.type === 'remember') {
+          remember(scope, action.text);
+          continue;
+        }
+        if (action.type === 'forget') {
+          if (action.to != null && forget(scope, Number(action.to))) log.info(`${state.place}: forgot note ${action.to}`);
+          continue;
+        }
+        const key = normalize(action.text);
+        // short stuff like "no" or "lmao" is allowed to come up again
+        if (key.length >= 10 && spoken.has(key)) {
+          log.info(`${state.place}: dropped a repeat: ${action.text}`);
+          continue;
+        }
+        spoken.add(key);
         if (acted === 0) {
           log.info(`${state.place}: first message after ${Date.now() - started}ms`);
+        } else if (!(await pace(state.channel, action.text, lastSent, abort.signal))) {
+          break;
         }
-        const text = await perform(state.channel, chLog, transcript, action);
+        const text = await perform(state.channel, guild, chLog, action);
         if (text) {
+          lastSent = Date.now();
           acted++;
           state.spoke++;
           said.push(text);
@@ -222,7 +257,7 @@ async function run(state: ChannelState) {
       for (const query of wanted.slice(0, 2)) {
         log.info(`${state.place}: searching archive for "${query}"`);
         searches.push(
-          `<search query="${query}">\n${searchArchive(state.id, query, transcript.refs.get(1))}\n</search>`
+          `<search query="${query}">\n${searchArchive(state.id, query, transcript.firstId)}\n</search>`
         );
       }
     }
@@ -244,7 +279,28 @@ async function run(state: ChannelState) {
   }
 }
 
-const prefix = /^\s*(?:\[#?\d+[^\]]*\]\s*)?(?:gork(?: \(you\))?\s*:\s*)/i;
+/**
+ * Wait between messages like someone typing them one at a time. Returns false if
+ * gork got interrupted while waiting.
+ */
+async function pace(channel: SendableChannels, text: string, lastSent: number, signal: AbortSignal) {
+  const jitter = 0.75 + Math.random() * 0.5;
+  const want = Math.min(
+    timing.maxMessageGapMs,
+    (timing.messageGapMs + text.length * timing.perCharMs) * jitter
+  );
+  const wait = want - (Date.now() - lastSent);
+  if (wait <= 0) return !signal.aborted;
+  channel.sendTyping().catch(() => {});
+  try {
+    await sleep(wait, undefined, { signal });
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+const prefix = /^\s*(?:\[#?\d+[^\]]*\]\s*)?(?:gork(?: \(you\))?\s*:\s*)?/i;
 
 // gork doesn't do emojis, even if the model slips one in
 const emoji =
@@ -264,15 +320,20 @@ function chunks(text: string) {
   return out;
 }
 
-const allowedMentions = { parse: ['users' as const], repliedUser: true };
+/** For spotting repeats: case, punctuation and spacing don't make a line new. */
+function normalize(text: string) {
+  return text.toLowerCase().replace(/<@!?\d+>/g, '@').replace(/[^\p{L}\p{N}@]+/gu, '');
+}
 
-async function resolveTarget(
-  channel: SendableChannels,
-  transcript: Transcript,
-  ref: number | null
-) {
-  const id = ref == null ? undefined : transcript.refs.get(ref);
-  if (!id) return;
+// gork can ping people, but never @everyone/roles, and never a whole raid's worth at once
+const maxPings = 5;
+function allowedMentions(text: string) {
+  const users = [...new Set([...text.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]!))];
+  return { users: users.slice(0, maxPings), repliedUser: true };
+}
+
+async function resolveTarget(channel: SendableChannels, id: string | null) {
+  if (!id || !/^\d{15,21}$/.test(id)) return;
   return (
     channel.messages.cache.get(id) ??
     (await channel.messages.fetch(id).catch(() => undefined))
@@ -280,64 +341,90 @@ async function resolveTarget(
 }
 
 /**
- * The model only knows display names, so "@alex" would show up as plain text.
- * Turn @name / @username of anyone in the channel's history into a real <@id> ping.
+ * The model is told to ping with <@id>, but it still writes "@niko" sometimes, which
+ * shows up as plain text. Turn @name / @username of anyone in the server (or the
+ * channel's history, in DMs) into a real ping. Longest name wins, so "@niko bellic"
+ * beats "@niko".
  */
-export function linkMentions(text: string, chLog: ChannelLog) {
-  const ids = new Map<string, string>();
-  for (const m of chLog.messages) {
-    if (m.self) continue;
-    ids.set(m.name.toLowerCase(), m.authorId);
-    ids.set(m.username.toLowerCase(), m.authorId);
-  }
+export function linkMentions(text: string, guild: Guild | null, chLog: ChannelLog) {
+  if (!text.includes('@')) return text;
+  const ids = mentionNames(guild, chLog);
   if (!ids.size) return text;
-  const names = [...ids.keys()]
-    .sort((a, b) => b.length - a.length)
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const pattern = new RegExp(`(?<![\\p{L}\\p{N}_])@(${names.join('|')})(?![\\p{L}\\p{N}_])`, 'giu');
-  return text.replace(pattern, (match, name: string) => {
-    const id = ids.get(name.toLowerCase());
-    return id ? `<@${id}>` : match;
-  });
+  // <@name> is a common slip too
+  text = text.replace(/<@!?([^\d>][^>]{0,31})>/g, '@$1');
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const at = text.indexOf('@', i);
+    if (at < 0 || /[\p{L}\p{N}_<]/u.test(text[at - 1] ?? '')) {
+      out += text.slice(i, at < 0 ? undefined : at + 1);
+      if (at < 0) break;
+      i = at + 1;
+      continue;
+    }
+    out += text.slice(i, at);
+    let hit: { id: string; len: number } | undefined;
+    // discord names are at most 32 chars
+    for (let len = Math.min(32, text.length - at - 1); len > 0; len--) {
+      const name = text.slice(at + 1, at + 1 + len);
+      const id = ids.get(name.toLowerCase());
+      if (id && !/[\p{L}\p{N}_]/u.test(text[at + 1 + len] ?? '')) {
+        hit = { id, len };
+        break;
+      }
+    }
+    if (hit) {
+      out += `<@${hit.id}>`;
+      i = at + 1 + hit.len;
+    } else {
+      out += '@';
+      i = at + 1;
+    }
+  }
+  return out;
 }
 
 /**
- * Transcript #numbers mean nothing to people in discord. If one slips into a message,
- * swap it for a jump link to the actual message.
+ * gork links a message by writing #<message id>. Turn that into a jump link, and drop
+ * ids that aren't real messages here so he can't link to something he made up.
  */
-export function linkRefs(text: string, transcript: Transcript, channelId: string, guildId: string | null) {
-  return text.replace(/(?<![\p{L}\p{N}_&<])#(\d{1,4})(?!\d)/gu, (match, n: string) => {
-    const id = transcript.refs.get(Number(n));
-    return id ? `https://discord.com/channels/${guildId ?? '@me'}/${channelId}/${id}` : match;
+export function linkRefs(text: string, chLog: ChannelLog, channelId: string, guildId: string | null) {
+  return text.replace(/(?<![\p{L}\p{N}_<@!&\/:])(#?)(\d{17,20})(?![\d>])/gu, (match, hash: string, id: string) => {
+    if (chLog.byId.has(id) || isArchived(id)) {
+      return `https://discord.com/channels/${guildId ?? '@me'}/${channelId}/${id}`;
+    }
+    return hash ? '' : match;
   });
 }
 
 async function perform(
   channel: SendableChannels,
+  guild: Guild | null,
   chLog: ChannelLog,
-  transcript: Transcript,
   action: Action
 ): Promise<string | undefined> {
   try {
     const guildId = 'guildId' in channel ? channel.guildId : null;
-    const text = linkRefs(linkMentions(clean(action.text), chLog), transcript, channel.id, guildId);
+    const text = linkRefs(linkMentions(clean(action.text), guild, chLog), chLog, channel.id, guildId)
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
     if (!text) return;
     const [first, ...rest] = chunks(text);
     const target =
       action.type === 'reply'
-        ? await resolveTarget(channel, transcript, action.to)
+        ? await resolveTarget(channel, action.to)
         : undefined;
 
     if (target) {
       await target.reply({
         content: first!,
-        allowedMentions,
+        allowedMentions: allowedMentions(first!),
         failIfNotExists: false,
       });
     } else {
-      await channel.send({ content: first!, allowedMentions });
+      await channel.send({ content: first!, allowedMentions: allowedMentions(first!) });
     }
-    for (const part of rest) await channel.send({ content: part, allowedMentions });
+    for (const part of rest) await channel.send({ content: part, allowedMentions: allowedMentions(part) });
     return text;
   } catch (error) {
     log.warn(`failed to ${action.type}`, error);

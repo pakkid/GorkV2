@@ -18,6 +18,34 @@ export const history = {
   maxChannels: 500,
   // images from the newest messages that get sent to the model
   maxImages: 4,
+  // chat older than this is marked as old news so gork doesn't drag it back up
+  staleMs: 2 * 60 * 60 * 1000,
+  // a silence this long between two messages gets called out in the transcript
+  gapMs: 30 * 60 * 1000,
+  // on a fresh start, backfilled messages younger than this still count as new
+  freshMs: 2 * 60 * 1000,
+  // gork's own recent messages listed back to him so he stops reusing bits
+  recentSelf: 15,
+};
+
+// the server member list gork gets to see
+export const members = {
+  // members listed in the prompt (people active in the channel come first)
+  roster: 150,
+  // don't pull the member list of servers bigger than this
+  fetchMax: 25_000,
+};
+
+// notes gork chooses to keep about people and the server
+export const memory = {
+  // notes kept per server (oldest dropped first)
+  maxNotes: 200,
+  // newest notes shown to the model each turn
+  inPrompt: 40,
+  // /memory reinit: how much recent chat gork reads to rebuild his notes,
+  // and how much of it goes into each model call
+  rebuildMessages: 20_000,
+  rebuildChunkChars: 30_000,
 };
 
 export const timing = {
@@ -25,6 +53,11 @@ export const timing = {
   pingDebounceMs: 250,
   // wait this long after normal chatter before deciding whether to chime in
   idleDebounceMs: 1500,
+  // pause between gork's messages in one turn, like he's typing each one:
+  // base + per character, ±25% jitter, capped
+  messageGapMs: 1200,
+  perCharMs: 45,
+  maxMessageGapMs: 6000,
   // give up on a model call after this long
   timeoutMs: 45_000,
 };
