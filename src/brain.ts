@@ -189,6 +189,11 @@ async function run(state: ChannelState) {
       .filter((m) => m.self && !m.deleted)
       .slice(-history.recentSelf)
       .map((m) => m.content.replace(/\s+/g, ' ').slice(0, 160));
+    // ratings are his worst verbal tic, so count them and tell him to knock it off
+    const ratings = chLog.messages
+      .filter((m) => m.self)
+      .slice(-30)
+      .filter((m) => /\b\d+(?:\.\d+)?\s*\/\s*10\b|\bout of (?:10|ten)\b/i.test(m.content)).length;
     // anything gork already said here, normalized, so he can't post the same line twice
     const spoken = new Set(chLog.messages.filter((m) => m.self).map((m) => normalize(m.content)));
 
@@ -214,6 +219,7 @@ async function run(state: ChannelState) {
           members,
           notes: notes(scope),
           now: Date.now(),
+          ratings,
           canSearch,
         }),
         images: round === 0 ? transcript.images : [],

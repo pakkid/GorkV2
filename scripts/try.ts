@@ -53,6 +53,7 @@ const prompt = contextPrompt({
   notes: [{ id: 1, text: 'alex hosts the minecraft server', created_at: now - 9 * 86_400_000 }],
   now: Date.now(),
   canSearch: true,
+  ratings: 0,
 });
 
 console.log(`model: ${env.AI_MODEL} via ${env.AI_PROVIDER} ${env.AI_BASE_URL ?? ''}\n`);
