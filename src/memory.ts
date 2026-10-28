@@ -52,6 +52,26 @@ export function forgetAll(scope: string) {
   return Number(removeAll.run(scope).changes);
 }
 
+const editStmt = db.prepare('UPDATE notes SET text = ? WHERE id = ?');
+const deleteStmt = db.prepare('DELETE FROM notes WHERE id = ?');
+const scopesStmt = db.prepare('SELECT scope, COUNT(*) n FROM notes GROUP BY scope');
+
+/** Change a note's text by id (web ui). */
+export function editNote(id: number, text: string) {
+  const clean = text.replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!clean) return false;
+  return editStmt.run(clean, id).changes > 0;
+}
+
+export function deleteNote(id: number) {
+  return deleteStmt.run(id).changes > 0;
+}
+
+/** Every scope that has notes, with how many. */
+export function noteScopes() {
+  return scopesStmt.all() as { scope: string; n: number }[];
+}
+
 /** Newest notes, oldest first so they read like a timeline. */
 export function notes(scope: string, limit = cfg.inPrompt) {
   return (latest.all(scope, limit) as unknown as Note[]).reverse();

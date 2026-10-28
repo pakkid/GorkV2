@@ -40,6 +40,12 @@ Settings and the message archive live in the `gork-data` volume, so redeploys ke
 
 Plain Docker works the same: put the variables in `.env` and run `docker compose up -d --build`.
 
+## Memory editor
+
+Gork serves a small web page for reading, adding, editing and deleting his notes on port `8787` (`WEB_PORT`, `0` turns it off). Open `http://<server's LAN ip>:8787`.
+
+It's LAN only: requests from anything other than a private, loopback or link-local address are refused, as are requests whose `Host` isn't an ip, `localhost`, a bare hostname or a `.local`/`.lan`/`.home.arpa`/`.internal` name. There's no password, so anyone on your network can use it. In Docker, set `WEB_BIND` to the host's LAN ip so the port isn't published on other interfaces either. Don't put it behind a reverse proxy on the same machine: everything would look local.
+
 ## Commands
 
 Gork starts with **no channel access**. Whitelist a channel with `/mode set scope:Channel value:Relevance` (threads follow their parent channel), or a whole server with `scope:Server`. DMs only work with the bot owner. Settings commands need `DISCORD_OWNER_ID` set.

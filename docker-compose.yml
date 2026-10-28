@@ -19,6 +19,11 @@ services:
       AI_REASONING: ${AI_REASONING:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
+      WEB_PORT: 8787
+    # memory editor web ui. set WEB_BIND to this host's LAN ip (e.g. 192.168.1.20) so it
+    # only listens there; gork also refuses anything that isn't a private-network address
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_HOST_PORT:-8787}:8787"
     volumes:
       - gork-data:/app/data
     logging:

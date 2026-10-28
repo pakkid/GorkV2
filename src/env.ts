@@ -23,6 +23,8 @@ const schema = z.object({
 
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   DATA_DIR: z.string().default('data'),
+  // memory editor web ui, only answers devices on the local network. 0 turns it off
+  WEB_PORT: z.coerce.number().int().min(0).max(65535).default(8787),
 });
 
 // treat `FOO=` in .env as unset so defaults apply

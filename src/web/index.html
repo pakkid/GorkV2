@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gork's memory</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #fff; --text: #1d1d1b; --muted: #6d6b66; --line: #e2e0da;
+    --accent: #5865f2; --danger: #c93c3c; --ok: #2f8a4e; --chip: #eceaf9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a; --panel: #1f1f23; --text: #ececea; --muted: #9a9893; --line: #2e2e34;
+      --accent: #7c86ff; --danger: #ff6b6b; --ok: #5fcf86; --chip: #2a2b45;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 32px 16px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  select, input, textarea, button { font: inherit; color: inherit; }
+  select, input[type=search] {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  }
+  select { flex: 1 1 240px; min-width: 0; }
+  input[type=search] { flex: 1 1 200px; min-width: 0; }
+  button {
+    border: 1px solid var(--line); background: var(--panel); border-radius: 8px;
+    padding: 8px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  .add { display: flex; gap: 8px; margin-bottom: 20px; }
+  .add textarea { flex: 1; }
+  textarea {
+    width: 100%; resize: vertical; min-height: 40px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  }
+  textarea:focus, select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+  .chip { background: var(--chip); color: var(--accent); border-radius: 99px; padding: 0 8px; font-size: 12px; }
+  .meta .spacer { flex: 1; }
+  .meta button { padding: 2px 8px; font-size: 13px; }
+  .dirty textarea { border-color: var(--accent); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; color: var(--muted); font-size: 13px; }
+  #toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+    padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1>gork's memory</h1>
+  <p class="sub">Notes gork keeps about each server. He sees the newest ones every time he talks.</p>
+
+  <div class="bar">
+    <select id="scope" aria-label="Server"></select>
+    <input id="filter" type="search" placeholder="Filter notes" aria-label="Filter notes">
+  </div>
+
+  <form class="add" id="add">
+    <textarea id="newText" rows="1" maxlength="300" placeholder="Add a note, e.g. niko owes sam 20 bucks"></textarea>
+    <button class="primary" type="submit">Add</button>
+  </form>
+
+  <ul id="list"></ul>
+
+  <div class="foot">
+    <span id="count"></span>
+    <button class="danger" id="wipe" type="button">Wipe all notes</button>
+  </div>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let info = { scopes: [], inPrompt: 40, max: 200 };
+let notes = [];
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'content-type': 'application/json', 'x-gork': '1' },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `error ${res.status}`);
+  return data;
+}
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+const fmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+async function loadScopes() {
+  info = await api('/api/scopes');
+  const sel = $('scope');
+  const keep = sel.value || localStorage.getItem('scope');
+  sel.replaceChildren(...info.scopes.map((s) => new Option(`${s.name} (${s.count})`, s.id)));
+  if (keep && info.scopes.some((s) => s.id === keep)) sel.value = keep;
+}
+
+async function loadNotes() {
+  const scope = $('scope').value;
+  notes = scope ? (await api(`/api/notes?scope=${scope}`)).notes : [];
+  render();
+}
+
+function render() {
+  const q = $('filter').value.trim().toLowerCase();
+  // notes come oldest first; the newest `inPrompt` are the ones gork sees
+  const seen = new Set(notes.slice(-info.inPrompt).map((n) => n.id));
+  const shown = notes.filter((n) => !q || n.text.toLowerCase().includes(q)).reverse();
+  const list = $('list');
+  list.replaceChildren();
+  if (!shown.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = $('scope').value ? (q ? 'Nothing matches.' : 'He remembers nothing here yet.') : 'No servers.';
+    list.append(li);
+  }
+  for (const n of shown) list.append(row(n, seen.has(n.id)));
+  $('count').textContent = `${notes.length} of max ${info.max} notes`;
+  $('wipe').disabled = !notes.length;
+}
+
+function row(n, inPrompt) {
+  const li = document.createElement('li');
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const when = document.createElement('span');
+  when.textContent = `#${n.id} · ${fmt.format(n.created_at)}`;
+  meta.append(when);
+  if (inPrompt) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = 'in prompt';
+    chip.title = 'gork sees this note every turn';
+    meta.append(chip);
+  }
+  const spacer = document.createElement('span');
+  spacer.className = 'spacer';
+  const save = document.createElement('button');
+  save.textContent = 'Save';
+  save.hidden = true;
+  const del = document.createElement('button');
+  del.textContent = 'Delete';
+  del.className = 'danger';
+  meta.append(spacer, save, del);
+
+  const text = document.createElement('textarea');
+  text.value = n.text;
+  text.maxLength = 300;
+  text.rows = Math.max(1, Math.ceil(n.text.length / 80));
+  text.addEventListener('input', () => {
+    const dirty = text.value.trim() !== n.text;
+    li.classList.toggle('dirty', dirty);
+    save.hidden = !dirty;
+  });
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!save.hidden) save.click(); }
+    if (e.key === 'Escape') { text.value = n.text; text.dispatchEvent(new Event('input')); }
+  });
+  save.addEventListener('click', async () => {
+    try {
+      await api(`/api/notes/${n.id}`, { method: 'PATCH', body: { text: text.value } });
+      n.text = text.value.replace(/\s+/g, ' ').trim();
+      text.value = n.text;
+      text.dispatchEvent(new Event('input'));
+      toast('saved');
+    } catch (e) { toast(e.message); }
+  });
+  del.addEventListener('click', async () => {
+    try {
+      await api(`/api/notes/${n.id}`, { method: 'DELETE' });
+      notes = notes.filter((x) => x.id !== n.id);
+      render();
+      toast('deleted');
+      loadScopes();
+    } catch (e) { toast(e.message); }
+  });
+  li.append(meta, text);
+  return li;
+}
+
+$('scope').addEventListener('change', () => {
+  try { localStorage.setItem('scope', $('scope').value); } catch {}
+  loadNotes().catch((e) => toast(e.message));
+});
+$('filter').addEventListener('input', render);
+
+$('add').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $('newText').value.trim();
+  if (!text || !$('scope').value) return;
+  try {
+    await api('/api/notes', { method: 'POST', body: { scope: $('scope').value, text } });
+    $('newText').value = '';
+    await Promise.all([loadNotes(), loadScopes()]);
+    toast('added');
+  } catch (e) { toast(e.message); }
+});
+$('newText').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('add').requestSubmit(); }
+});
+
+$('wipe').addEventListener('click', async () => {
+  const name = $('scope').selectedOptions[0]?.textContent;
+  if (!confirm(`Delete all ${notes.length} notes for ${name}? This can't be undone.`)) return;
+  try {
+    const { removed } = await api(`/api/notes?scope=${$('scope').value}`, { method: 'DELETE' });
+    await Promise.all([loadNotes(), loadScopes()]);
+    toast(`wiped ${removed} notes`);
+  } catch (e) { toast(e.message); }
+});
+
+loadScopes().then(loadNotes).catch((e) => toast(e.message));
+</script>
+</body>
+</html>
