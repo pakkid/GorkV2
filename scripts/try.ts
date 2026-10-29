@@ -48,6 +48,10 @@ const prompt = contextPrompt({
   interrupted: [],
   recent: log.messages.filter((m) => m.self).map((m) => m.content),
   members: 'Alex (@alex) <@111>\nSam (@sam) <@222>\nNikolai (Niko B, @niko.b) <@333>',
+  emojis: ':pepela: :skull_cry:',
+  searches: [],
+  said: [],
+  canSearch: false,
 });
 
 console.log(`model: ${env.AI_MODEL} via ${env.AI_PROVIDER} ${env.AI_BASE_URL ?? ''}\n`);

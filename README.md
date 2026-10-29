@@ -16,7 +16,8 @@ A rewrite of [gork](https://github.com/techwithanirudh/gork): a sarcastic, human
 | Memory | Pinecone vector memories | **none**. He only sees the last ~120 messages of a channel, held in RAM and gone on restart. Nothing people say is written to disk |
 | Interruptions | ignored | talk over him mid-reply and he stops, then gets mad at you |
 | Personality | v1 prompts | **the same v1 prompts** (core, personality, examples, when to talk, safety), plus behaviour modifiers and instructions you set in the web ui |
-| Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key; settings saved to `data/settings.json`, stats to `data/gork.db` |
+| Tools | web search, images, reacts, user lookup, DMs | **web search** (Exa, optional) and **reacts**; emojis allowed |
+| Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key (+ an optional Exa key for web search); settings saved to `data/settings.json`, stats to `data/gork.db` |
 
 ## Setup
 
@@ -28,13 +29,15 @@ cp .env.example .env   # fill it in
 npm run dev
 ```
 
+Set `EXA_API_KEY` ([Exa](https://dashboard.exa.ai/api-keys), what the original gork used) to let him search the web; without it he just doesn't search.
+
 Any OpenRouter-compatible endpoint works (`AI_BASE_URL`), including the Hack Club proxy. Pick a fast model with structured-output support; `AI_REASONING=minimal` keeps latency down.
 
 ## Deploy with Portainer
 
 1. **Stacks → Add stack → Repository**
 2. Repository URL: this repo, reference `refs/heads/main`, compose path `docker-compose.yml`
-3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`, `GORK_LOCATION`). If the repo is private, turn on **Authentication** with a GitHub token.
+3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `EXA_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`, `GORK_LOCATION`). If the repo is private, turn on **Authentication** with a GitHub token.
 4. Deploy. Slash commands register themselves on startup.
 
 Settings and stats live in the `gork-data` volume, so redeploys keep them. To update, hit **Pull and redeploy** on the stack (or enable GitOps auto-updates).

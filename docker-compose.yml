@@ -18,6 +18,7 @@ services:
       AI_FALLBACK_MODELS: ${AI_FALLBACK_MODELS:-minimax-m3.1-flash,z-ai/glm-5.3-flash}
       AI_REASONING: ${AI_REASONING:-}
       AI_PRICES: ${AI_PRICES:-}
+      EXA_API_KEY: ${EXA_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # gork's clock and hometown. match these to where your server's people are
       TZ: ${TZ:-America/New_York}

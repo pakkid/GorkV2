@@ -2,18 +2,20 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Guild, Message, SendableChannels } from 'discord.js';
 import { contextPrompt, systemPrompt } from './ai/prompt';
 import { type Action, think } from './ai/think';
-import { history, keywords, limits, timezone, timing } from './config';
+import { history, keywords, limits, timezone, timing, web } from './config';
 import {
   type ChannelLog,
   type ChatMsg,
   channelLog,
   renderTranscript,
   type Transcript,
+  untrusted,
 } from './history';
 import { logger } from './log';
 import { mentionNames, roster } from './members';
 import { modeOf, ownerRules, settings } from './settings';
 import { recordSent, recordTurn } from './stats';
+import { canSearchWeb, searchWeb } from './web-search';
 
 const log = logger('brain');
 
@@ -185,45 +187,78 @@ async function run(state: ChannelState) {
     // anything gork already said here, normalized, so he can't post the same line twice
     const spoken = new Set(chLog.messages.filter((m) => m.self).map((m) => normalize(m.content)));
 
-    for await (const action of think({
-      system: systemPrompt(safe, ownerRules(state.guildId)),
-      prompt: contextPrompt({
-        place: state.place,
-        topic: state.topic,
-        time: nowFmt.format(Date.now()),
-        transcript: transcript.text,
-        pinged: urgent,
-        interrupted: [...interruptedBy]
-          .map((id) => chLog.byId.get(id)?.name)
-          .filter((n): n is string => !!n),
-        recent,
-        members,
-      }),
-      images: transcript.images,
-      signal: abort.signal,
-      where: { kind: 'chat', guildId: state.guildId, channelId: state.id },
-    })) {
-      if (abort.signal.aborted) break;
-      const key = normalize(action.text);
-      // short stuff like "no" or "lmao" is allowed to come up again
-      if (key.length >= 10 && spoken.has(key)) {
-        log.info(`${state.place}: dropped a repeat: ${action.text}`);
-        continue;
+    const emojis = guild ? emojiList(guild) : undefined;
+    const said: string[] = [];
+    const searches: string[] = [];
+
+    // gork can look things up on the web, then think again with the results
+    for (let round = 0; round <= web.maxSearches; round++) {
+      const canSearch = canSearchWeb && round < web.maxSearches;
+      const wanted: string[] = [];
+
+      for await (const action of think({
+        system: systemPrompt(safe, ownerRules(state.guildId), canSearchWeb),
+        prompt: contextPrompt({
+          place: state.place,
+          topic: state.topic,
+          time: nowFmt.format(Date.now()),
+          transcript: transcript.text,
+          pinged: urgent,
+          interrupted: [...interruptedBy]
+            .map((id) => chLog.byId.get(id)?.name)
+            .filter((n): n is string => !!n),
+          recent,
+          members,
+          emojis,
+          searches,
+          said,
+          canSearch,
+        }),
+        images: round === 0 ? transcript.images : [],
+        signal: abort.signal,
+        where: { kind: 'chat', guildId: state.guildId, channelId: state.id },
+      })) {
+        if (abort.signal.aborted) break;
+        if (action.type === 'search') {
+          if (canSearch && action.text.trim()) wanted.push(action.text.trim());
+          continue;
+        }
+        if (action.type === 'react') {
+          if (await react(state.channel, guild, action)) {
+            acted++;
+            said.push(`(reacted ${action.text} to ${action.to})`);
+          }
+          continue;
+        }
+        const key = normalize(action.text);
+        // short stuff like "no" or "lmao" is allowed to come up again
+        if (key.length >= 10 && spoken.has(key)) {
+          log.info(`${state.place}: dropped a repeat: ${action.text}`);
+          continue;
+        }
+        spoken.add(key);
+        if (acted === 0) {
+          log.info(`${state.place}: first message after ${Date.now() - started}ms`);
+          // nobody saw "typing" while he decided whether to butt in, so type it out now
+          if (!urgent && !(await pace(state.channel, action.text, Date.now(), abort.signal))) break;
+        } else if (!(await pace(state.channel, action.text, lastSent, abort.signal))) {
+          break;
+        }
+        const text = await perform(state.channel, guild, chLog, action);
+        if (text) {
+          lastSent = Date.now();
+          acted++;
+          state.spoke++;
+          said.push(text);
+        }
       }
-      spoken.add(key);
-      if (acted === 0) {
-        log.info(`${state.place}: first message after ${Date.now() - started}ms`);
-        // nobody saw "typing" while he decided whether to butt in, so type it out now
-        if (!urgent && !(await pace(state.channel, action.text, Date.now(), abort.signal))) break;
-      } else if (!(await pace(state.channel, action.text, lastSent, abort.signal))) {
-        break;
-      }
-      const text = await perform(state.channel, guild, chLog, action);
-      if (text) {
-        lastSent = Date.now();
-        acted++;
-        state.spoke++;
-      }
+
+      if (!wanted.length || abort.signal.aborted) break;
+      if (!urgent && round === 0) stopTyping = startTyping(state.channel);
+      const queries = wanted.slice(0, 2);
+      log.info(`${state.place}: searching the web for ${queries.map((q) => `"${q}"`).join(', ')}`);
+      const results = await Promise.all(queries.map(searchWeb));
+      queries.forEach((q, i) => searches.push(`<search query="${untrusted(q).replace(/"/g, "'")}">\n${results[i]}\n</search>`));
     }
 
     recordTurn(state.guildId, state.id, urgent, acted > 0);
@@ -267,14 +302,9 @@ async function pace(channel: SendableChannels, text: string, lastSent: number, s
 
 const prefix = /^\s*(?:\[#?\d+[^\]]*\]\s*)?(?:gork(?: \(you\))?\s*:\s*)?/i;
 
-// gork doesn't do emojis, even if the model slips one in
-const emoji =
-  /<a?:\w+:\d+>|[\p{Extended_Pictographic}\p{Regional_Indicator}\u{FE0F}\u{200D}\u{20E3}\u{1F3FB}-\u{1F3FF}]/gu;
-
 function clean(text: string) {
   return text
     .replace(prefix, '')
-    .replace(emoji, '')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
@@ -362,6 +392,50 @@ export function linkRefs(text: string, chLog: ChannelLog, channelId: string, gui
   });
 }
 
+/** The server's own emojis, for the prompt: `:name:` is how gork writes them. */
+function emojiList(guild: Guild) {
+  const names = [...guild.emojis.cache.values()]
+    .filter((e) => e.available !== false && e.name)
+    .slice(0, 80)
+    .map((e) => `:${e.name}:`);
+  return names.length ? names.join(' ') : undefined;
+}
+
+/** `:name:` only renders in discord as `<:name:id>`, so swap in the real thing for server emojis. */
+function customEmojis(text: string, guild: Guild | null) {
+  if (!guild) return text;
+  return text.replace(/(?<![<\w]):(\w{2,32}):(?!\d)/g, (match, name: string) => {
+    const e = guild.emojis.cache.find((x) => x.name === name);
+    return e ? e.toString() : match;
+  });
+}
+
+/** One emoji as discord.js wants it for a reaction, or undefined if it isn't one. */
+function reaction(raw: string, guild: Guild | null) {
+  const custom = /^<a?:\w+:(\d+)>$/.exec(raw);
+  if (custom) return custom[1];
+  const name = /^:?(\w{2,32}):?$/.exec(raw)?.[1];
+  if (name) return guild?.emojis.cache.find((e) => e.name === name)?.id;
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(raw) ? raw : undefined;
+}
+
+async function react(channel: SendableChannels, guild: Guild | null, action: Action) {
+  const target = await resolveTarget(channel, action.to);
+  if (!target) return false;
+  let reacted = false;
+  for (const raw of action.text.trim().split(/\s+/).slice(0, 3)) {
+    const emoji = reaction(raw, guild);
+    if (!emoji) continue;
+    try {
+      await target.react(emoji);
+      reacted = true;
+    } catch (error) {
+      log.warn(`couldn't react with ${raw}`, error);
+    }
+  }
+  return reacted;
+}
+
 async function perform(
   channel: SendableChannels,
   guild: Guild | null,
@@ -370,7 +444,7 @@ async function perform(
 ): Promise<string | undefined> {
   try {
     const guildId = 'guildId' in channel ? channel.guildId : null;
-    const text = linkRefs(linkMentions(clean(action.text), guild, chLog), chLog, channel.id, guildId)
+    const text = linkRefs(linkMentions(customEmojis(clean(action.text), guild), guild, chLog), chLog, channel.id, guildId)
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
     if (!text) return;

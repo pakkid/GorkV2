@@ -23,6 +23,9 @@ const schema = z.object({
   // model=in/out,... in $ per million tokens, for cost estimates on gateways that don't report cost
   AI_PRICES: z.string().optional(),
 
+  // web search, like the original gork: https://dashboard.exa.ai/api-keys. unset = no searching
+  EXA_API_KEY: z.string().optional(),
+
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   DATA_DIR: z.string().default('data'),
   // stats + behaviour editor web ui, only answers devices on the local network. 0 turns it off

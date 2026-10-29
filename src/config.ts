@@ -41,6 +41,15 @@ export const members = {
   fetchMax: 25_000,
 };
 
+// web search (Exa), only on when EXA_API_KEY is set
+export const web = {
+  results: 5,
+  charsPerResult: 1000,
+  timeoutMs: 10_000,
+  // searches gork may run before he has to answer
+  maxSearches: 2,
+};
+
 export const timing = {
   // wait this long after a ping for follow-up messages before thinking
   pingDebounceMs: 250,

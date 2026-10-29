@@ -7,6 +7,7 @@ import { logger } from '../log';
 import { systemPrompt } from '../ai/prompt';
 import { type Behavior, type Modifier, ownerRules, settings } from '../settings';
 import { summary } from '../stats';
+import { canSearchWeb } from '../web-search';
 
 const log = logger('web');
 const page = readFileSync(new URL('./index.html', import.meta.url));
@@ -140,7 +141,7 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
     const scope = url.searchParams.get('scope') ?? 'global';
     const guild = client.guilds.cache.get(scope);
     const safe = guild ? settings.safety(guild.id, '') === 'safe' : false;
-    return send(res, 200, { prompt: systemPrompt(safe, ownerRules(guild?.id ?? null)) });
+    return send(res, 200, { prompt: systemPrompt(safe, ownerRules(guild?.id ?? null), canSearchWeb) });
   }
 
   return send(res, 404, { error: 'not found' });

@@ -288,7 +288,7 @@ function gap(ms: number) {
 }
 
 const promptTags =
-  /<\/?\s*(transcript|context|members|core|personality|examples|when-to-talk|task|safety|security|time|owner-instructions|system|instructions?)\b[^>]*>/gi;
+  /<\/?\s*(transcript|context|members|emojis|web-results|search|tools|core|personality|examples|when-to-talk|task|safety|security|time|owner-instructions|system|instructions?)\b[^>]*>/gi;
 
 /**
  * Chat text goes into the prompt as data. Make sure it can't pose as part of the prompt:
