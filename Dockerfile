@@ -10,7 +10,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY tsconfig.json ./
 COPY src ./src
 
-# settings + the message archive live here; mount a volume over it
+# settings + stats live here; mount a volume over it
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME /app/data
 USER node

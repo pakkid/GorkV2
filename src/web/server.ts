@@ -2,10 +2,10 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
 import type { Client } from 'discord.js';
-import { memory as cfg } from '../config';
 import { env } from '../env';
 import { logger } from '../log';
-import { deleteNote, editNote, forgetAll, noteScopes, notes, remember } from '../memory';
+import { systemPrompt } from '../ai/prompt';
+import { type Behavior, type Modifier, ownerRules, settings } from '../settings';
 import { summary } from '../stats';
 
 const log = logger('web');
@@ -53,30 +53,23 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 10_000) throw new Error('too big');
+    if (raw.length > 200_000) throw new Error('too big');
   }
   const data = JSON.parse(raw || '{}');
   return data && typeof data === 'object' ? data : {};
 }
 
-function scopeName(client: Client, id: string) {
-  const guild = client.guilds.cache.get(id);
-  if (guild) return guild.name;
-  const channel = client.channels.cache.get(id);
-  if (channel?.isDMBased() && 'recipient' in channel && channel.recipient) {
-    return `DMs with @${channel.recipient.username}`;
-  }
-  return `unknown (${id})`;
-}
-
 function channelName(client: Client, id: string) {
   const ch = client.channels.cache.get(id);
   if (!ch) return { name: `unknown (${id})`, server: null };
-  if (ch.isDMBased()) return { name: scopeName(client, id), server: null };
+  if (ch.isDMBased()) {
+    const who = 'recipient' in ch && ch.recipient ? `@${ch.recipient.username}` : 'someone';
+    return { name: `DMs with ${who}`, server: null };
+  }
   return { name: `#${ch.name}`, server: ch.guild.name };
 }
 
-// the archive queries scan a lot of rows, so the page gets a slightly stale answer
+// the page polls; no need to rerun every query each time
 const statsCache = new Map<string, { at: number; body: unknown }>();
 
 function stats(client: Client, scope: string, days: number) {
@@ -84,14 +77,7 @@ function stats(client: Client, scope: string, days: number) {
   const hit = statsCache.get(key);
   if (hit && Date.now() - hit.at < 30_000) return hit.body;
   const guild = scope === 'all' ? undefined : client.guilds.cache.get(scope);
-  const data = summary(
-    {
-      since: Date.now() - days * 86_400_000,
-      guildId: guild?.id,
-      channelIds: guild ? [...guild.channels.cache.keys()] : undefined,
-    },
-    client.user?.id ?? '-'
-  );
+  const data = summary({ since: Date.now() - days * 86_400_000, guildId: guild?.id });
   const body = {
     ...data,
     days,
@@ -128,60 +114,52 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
     return send(res, 200, stats(client, scope, days));
   }
 
-  if (method === 'GET' && url.pathname === '/api/scopes') {
-    const counts = new Map(noteScopes().map((s) => [s.scope, s.n]));
-    for (const id of client.guilds.cache.keys()) if (!counts.has(id)) counts.set(id, 0);
-    const scopes = [...counts]
-      .map(([id, count]) => ({ id, name: scopeName(client, id), count }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-    return send(res, 200, { scopes, max: cfg.maxNotes, inPrompt: cfg.inPrompt });
-  }
-
-  if (url.pathname === '/api/notes') {
-    const scope = method === 'GET' || method === 'DELETE' ? url.searchParams.get('scope') : null;
+  if (url.pathname === '/api/behavior') {
+    const scope = url.searchParams.get('scope') ?? 'global';
+    if (scope !== 'global' && !client.guilds.cache.has(scope)) return send(res, 400, { error: 'bad scope' });
     if (method === 'GET') {
-      if (!scope || !/^\d+$/.test(scope)) return send(res, 400, { error: 'bad scope' });
-      return send(res, 200, { notes: notes(scope, cfg.maxNotes) });
+      const scopes = [
+        { id: 'global', name: 'Everywhere' },
+        ...[...client.guilds.cache.values()]
+          .map((g) => ({ id: g.id, name: g.name }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      ];
+      return send(res, 200, { scopes, behavior: settings.behavior(scope) });
     }
-    if (method === 'DELETE') {
-      if (!scope || !/^\d+$/.test(scope)) return send(res, 400, { error: 'bad scope' });
-      const removed = forgetAll(scope);
-      log.info(`wiped ${removed} notes in ${scope} from the web ui`);
-      return send(res, 200, { removed });
-    }
-    if (method === 'POST') {
-      const body = await readJson(req);
-      if (typeof body.scope !== 'string' || !/^\d+$/.test(body.scope)) {
-        return send(res, 400, { error: 'bad scope' });
-      }
-      if (typeof body.text !== 'string' || !body.text.trim()) return send(res, 400, { error: 'empty note' });
-      if (!remember(body.scope, body.text)) return send(res, 409, { error: 'already remembered' });
-      return send(res, 201, { ok: true });
+    if (method === 'PUT') {
+      const behavior = parseBehavior(await readJson(req));
+      if (!behavior) return send(res, 400, { error: 'bad behaviour' });
+      settings.setBehavior(scope, behavior);
+      log.info(`behaviour for ${scope} changed from the web ui`);
+      return send(res, 200, { behavior });
     }
   }
 
-  const one = /^\/api\/notes\/(\d+)$/.exec(url.pathname);
-  if (one) {
-    const id = Number(one[1]);
-    if (method === 'PATCH') {
-      const body = await readJson(req);
-      if (typeof body.text !== 'string' || !editNote(id, body.text)) {
-        return send(res, 400, { error: 'no such note or empty text' });
-      }
-      log.info(`edited note ${id} from the web ui`);
-      return send(res, 200, { ok: true });
-    }
-    if (method === 'DELETE') {
-      if (!deleteNote(id)) return send(res, 404, { error: 'no such note' });
-      log.info(`deleted note ${id} from the web ui`);
-      return send(res, 200, { ok: true });
-    }
+  // the system prompt gork gets in that scope, so the owner can see their rules land
+  if (method === 'GET' && url.pathname === '/api/prompt') {
+    const scope = url.searchParams.get('scope') ?? 'global';
+    const guild = client.guilds.cache.get(scope);
+    const safe = guild ? settings.safety(guild.id, '') === 'safe' : false;
+    return send(res, 200, { prompt: systemPrompt(safe, ownerRules(guild?.id ?? null)) });
   }
 
   return send(res, 404, { error: 'not found' });
 }
 
-/** Stats page and memory editor on WEB_PORT, for devices on the local network only. */
+const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
+
+function parseBehavior(body: Record<string, unknown>): Behavior | undefined {
+  if (!Array.isArray(body.modifiers) || body.modifiers.length > 50) return;
+  const modifiers: Modifier[] = [];
+  for (const raw of body.modifiers as Record<string, unknown>[]) {
+    if (!raw || typeof raw !== 'object') return;
+    const id = str(raw.id, 40) || Math.random().toString(36).slice(2, 10);
+    modifiers.push({ id, name: str(raw.name, 60), text: str(raw.text, 2000), on: raw.on === true });
+  }
+  return { modifiers, instructions: str(body.instructions, 8000) };
+}
+
+/** Stats page and behaviour editor on WEB_PORT, for devices on the local network only. */
 export function startWeb(client: Client) {
   if (!env.WEB_PORT) return;
   const server = createServer((req, res) => {
@@ -196,5 +174,5 @@ export function startWeb(client: Client) {
     });
   });
   server.on('error', (error) => log.error(`web ui couldn't start on port ${env.WEB_PORT}`, error));
-  server.listen(env.WEB_PORT, () => log.info(`stats + memory editor on http://<this machine's lan ip>:${env.WEB_PORT}`));
+  server.listen(env.WEB_PORT, () => log.info(`stats + behaviour editor on http://<this machine's lan ip>:${env.WEB_PORT}`));
 }

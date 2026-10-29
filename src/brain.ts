@@ -2,8 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Guild, Message, SendableChannels } from 'discord.js';
 import { contextPrompt, systemPrompt } from './ai/prompt';
 import { type Action, think } from './ai/think';
-import { crawlChannel, isArchived, searchArchive } from './archive';
-import { archive, history, keywords, limits, timezone, timing } from './config';
+import { history, keywords, limits, timezone, timing } from './config';
 import {
   type ChannelLog,
   type ChatMsg,
@@ -13,8 +12,7 @@ import {
 } from './history';
 import { logger } from './log';
 import { mentionNames, roster } from './members';
-import { forget, notes, remember } from './memory';
-import { modeOf, settings } from './settings';
+import { modeOf, ownerRules, settings } from './settings';
 import { recordSent, recordTurn } from './stats';
 
 const log = logger('brain');
@@ -78,7 +76,6 @@ function stateFor(message: Message): ChannelState | undefined {
       interruptedBy: [],
     };
     states.set(message.channelId, state);
-    crawlChannel(message.channel);
   }
   Object.assign(state, describePlace(message));
   state.channel = message.channel;
@@ -177,97 +174,55 @@ async function run(state: ChannelState) {
     state.abort = abort;
     state.spoke = 0;
     const started = Date.now();
-    const said: string[] = [];
-    const searches: string[] = [];
     let acted = 0;
     let lastSent = 0;
     const guild = 'guild' in state.channel ? state.channel.guild : null;
-    const scope = state.guildId ?? state.id;
     const members = guild ? roster(guild, chLog).text : undefined;
     const recent = chLog.messages
       .filter((m) => m.self && !m.deleted)
       .slice(-history.recentSelf)
       .map((m) => m.content.replace(/\s+/g, ' ').slice(0, 160));
-    // ratings are his worst verbal tic, so count them and tell him to knock it off
-    const ratings = chLog.messages
-      .filter((m) => m.self)
-      .slice(-30)
-      .filter((m) => /\b\d+(?:\.\d+)?\s*\/\s*10\b|\bout of (?:10|ten)\b/i.test(m.content)).length;
     // anything gork already said here, normalized, so he can't post the same line twice
     const spoken = new Set(chLog.messages.filter((m) => m.self).map((m) => normalize(m.content)));
 
-    // gork can look things up in the channel archive, then think again with the results
-    for (let round = 0; round <= archive.maxSearches; round++) {
-      const canSearch = round < archive.maxSearches;
-      const wanted: string[] = [];
-
-      for await (const action of think({
-        system: systemPrompt(safe),
-        prompt: contextPrompt({
-          place: state.place,
-          topic: state.topic,
-          time: nowFmt.format(Date.now()),
-          transcript: transcript.text,
-          pinged: urgent,
-          interrupted: [...interruptedBy]
-            .map((id) => chLog.byId.get(id)?.name)
-            .filter((n): n is string => !!n),
-          searches,
-          said,
-          recent,
-          members,
-          notes: notes(scope),
-          now: Date.now(),
-          ratings,
-          canSearch,
-        }),
-        images: round === 0 ? transcript.images : [],
-        signal: abort.signal,
-        where: { kind: 'chat', guildId: state.guildId, channelId: state.id },
-      })) {
-        if (abort.signal.aborted) break;
-        if (action.type === 'search') {
-          if (canSearch && action.text.trim()) wanted.push(action.text.trim());
-          continue;
-        }
-        if (action.type === 'remember') {
-          remember(scope, action.text);
-          continue;
-        }
-        if (action.type === 'forget') {
-          if (action.to != null && forget(scope, Number(action.to))) log.info(`${state.place}: forgot note ${action.to}`);
-          continue;
-        }
-        const key = normalize(action.text);
-        // short stuff like "no" or "lmao" is allowed to come up again
-        if (key.length >= 10 && spoken.has(key)) {
-          log.info(`${state.place}: dropped a repeat: ${action.text}`);
-          continue;
-        }
-        spoken.add(key);
-        if (acted === 0) {
-          log.info(`${state.place}: first message after ${Date.now() - started}ms`);
-          // nobody saw "typing" while he decided whether to butt in, so type it out now
-          if (!urgent && !(await pace(state.channel, action.text, Date.now(), abort.signal))) break;
-        } else if (!(await pace(state.channel, action.text, lastSent, abort.signal))) {
-          break;
-        }
-        const text = await perform(state.channel, guild, chLog, action);
-        if (text) {
-          lastSent = Date.now();
-          acted++;
-          state.spoke++;
-          said.push(text);
-        }
+    for await (const action of think({
+      system: systemPrompt(safe, ownerRules(state.guildId)),
+      prompt: contextPrompt({
+        place: state.place,
+        topic: state.topic,
+        time: nowFmt.format(Date.now()),
+        transcript: transcript.text,
+        pinged: urgent,
+        interrupted: [...interruptedBy]
+          .map((id) => chLog.byId.get(id)?.name)
+          .filter((n): n is string => !!n),
+        recent,
+        members,
+      }),
+      images: transcript.images,
+      signal: abort.signal,
+      where: { kind: 'chat', guildId: state.guildId, channelId: state.id },
+    })) {
+      if (abort.signal.aborted) break;
+      const key = normalize(action.text);
+      // short stuff like "no" or "lmao" is allowed to come up again
+      if (key.length >= 10 && spoken.has(key)) {
+        log.info(`${state.place}: dropped a repeat: ${action.text}`);
+        continue;
       }
-
-      if (!wanted.length || abort.signal.aborted) break;
-      if (!urgent && round === 0) stopTyping = startTyping(state.channel);
-      for (const query of wanted.slice(0, 2)) {
-        log.info(`${state.place}: searching archive for "${query}"`);
-        searches.push(
-          `<search query="${query}">\n${searchArchive(state.id, query, transcript.firstId)}\n</search>`
-        );
+      spoken.add(key);
+      if (acted === 0) {
+        log.info(`${state.place}: first message after ${Date.now() - started}ms`);
+        // nobody saw "typing" while he decided whether to butt in, so type it out now
+        if (!urgent && !(await pace(state.channel, action.text, Date.now(), abort.signal))) break;
+      } else if (!(await pace(state.channel, action.text, lastSent, abort.signal))) {
+        break;
+      }
+      const text = await perform(state.channel, guild, chLog, action);
+      if (text) {
+        lastSent = Date.now();
+        acted++;
+        state.spoke++;
       }
     }
 
@@ -396,11 +351,11 @@ export function linkMentions(text: string, guild: Guild | null, chLog: ChannelLo
 
 /**
  * gork links a message by writing #<message id>. Turn that into a jump link, and drop
- * ids that aren't real messages here so he can't link to something he made up.
+ * ids that aren't messages he can see so he can't link to something he made up.
  */
 export function linkRefs(text: string, chLog: ChannelLog, channelId: string, guildId: string | null) {
   return text.replace(/(?<![\p{L}\p{N}_<@!&\/:])(#?)(\d{17,20})(?![\d>])/gu, (match, hash: string, id: string) => {
-    if (chLog.byId.has(id) || isArchived(id)) {
+    if (chLog.byId.has(id)) {
       return `https://discord.com/channels/${guildId ?? '@me'}/${channelId}/${id}`;
     }
     return hash ? '' : match;

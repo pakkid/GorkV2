@@ -9,7 +9,7 @@ export const location = process.env.GORK_LOCATION || 'New York, USA';
 
 // how much chat gork keeps in his head per channel
 export const history = {
-  // messages kept in memory per channel
+  // messages kept per channel (in RAM only, gone on restart)
   maxMessages: 200,
   // messages fetched from discord the first time gork looks at a channel
   backfill: 100,
@@ -39,18 +39,6 @@ export const members = {
   roster: 150,
   // don't pull the member list of servers bigger than this
   fetchMax: 25_000,
-};
-
-// notes gork chooses to keep about people and the server
-export const memory = {
-  // notes kept per server (oldest dropped first)
-  maxNotes: 200,
-  // newest notes shown to the model each turn
-  inPrompt: 40,
-  // /memory reinit: how much recent chat gork reads to rebuild his notes,
-  // and how much of it goes into each model call
-  rebuildMessages: 20_000,
-  rebuildChunkChars: 30_000,
 };
 
 export const timing = {
@@ -94,20 +82,4 @@ export const prices: Record<string, [number, number]> = {
   'deepseek/deepseek-v4.1-flash': [0.06, 0.18],
   'minimax-m3.1-flash': [0.15, 0.6],
   'z-ai/glm-5.3-flash': [0.15, 0.5],
-};
-
-// long-term memory: every message gork sees is saved to data/archive.db
-export const archive = {
-  // walk back through each active channel's entire history in the background
-  crawl: true,
-  maxPerChannel: 250_000,
-  crawlDelayMs: 750,
-  // after downtime, max pages (of 100) to fetch to reconnect with the archive
-  maxGapPages: 50,
-  // what a search returns
-  searchHits: 6,
-  searchContext: 2,
-  searchChars: 6000,
-  // searches gork may run before he has to answer
-  maxSearches: 2,
 };

@@ -4,7 +4,6 @@ import {
   type PartialMessage,
   type TextBasedChannel,
 } from 'discord.js';
-import { archiveMessage, archiveRecent, unarchive } from './archive';
 import { history as cfg, timezone } from './config';
 import { logger } from './log';
 
@@ -180,7 +179,6 @@ export class ChannelLog {
         const cutoff = Date.now() - cfg.freshMs;
         this.lastSeenId = this.messages.findLast((m) => m.self || m.createdAt < cutoff)?.id;
       }
-      archiveRecent(channel, msgs);
       log.debug(
         `backfilled ${fetched.size} msgs in ${channel.id} (${Date.now() - started}ms)`
       );
@@ -218,7 +216,6 @@ export function recordMessage(message: Message): ChatMsg | undefined {
   if (message.content.startsWith('//')) return;
   const msg = toChatMsg(message);
   channelLog(message.channelId).add(msg);
-  archiveMessage(message.channelId, msg);
   return msg;
 }
 
@@ -229,7 +226,6 @@ export function recordEdit(message: Message | PartialMessage) {
     return;
   }
   const msg = toChatMsg(message);
-  archiveMessage(message.channelId, msg);
   const log = peekLog(message.channelId);
   if (log?.byId.has(message.id)) log.add(msg);
 }
@@ -237,8 +233,6 @@ export function recordEdit(message: Message | PartialMessage) {
 export function recordDelete(channelId: string, id: string) {
   const msg = peekLog(channelId)?.byId.get(id);
   if (msg) msg.deleted = true;
-  // deleted means deleted, gork forgets it too
-  unarchive(id);
 }
 
 export function recordReaction(
@@ -294,7 +288,7 @@ function gap(ms: number) {
 }
 
 const promptTags =
-  /<\/?\s*(transcript|context|members|memory|archive-results|chat-log|search|core|personality|examples|when-to-talk|safety|security|time|system|instructions?)\b[^>]*>/gi;
+  /<\/?\s*(transcript|context|members|core|personality|examples|when-to-talk|task|safety|security|time|owner-instructions|system|instructions?)\b[^>]*>/gi;
 
 /**
  * Chat text goes into the prompt as data. Make sure it can't pose as part of the prompt:

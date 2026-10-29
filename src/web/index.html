@@ -91,24 +91,41 @@
   #tip .row span:last-child { color: var(--text); }
   #tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
 
-  /* memory */
-  .add { display: flex; gap: 8px; margin-bottom: 20px; }
-  .add textarea { flex: 1; }
+  /* behaviour */
+  .section { margin-bottom: 28px; }
+  .section .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
   textarea {
     width: 100%; resize: vertical; min-height: 40px; background: var(--panel);
     border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
   }
+  input[type=text] {
+    background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 6px;
+    font-weight: 600; flex: 1; min-width: 0;
+  }
+  input[type=text]:hover { border-color: var(--line); }
   ul { list-style: none; padding: 0; margin: 0; }
-  li.note {
+  li.mod {
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 10px 12px; margin-bottom: 8px;
   }
-  .meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
-  .chip { background: var(--chip); color: var(--accent); border-radius: 99px; padding: 0 8px; font-size: 12px; }
-  .meta .spacer { flex: 1; }
+  li.mod.off textarea, li.mod.off input[type=text] { color: var(--muted); }
+  .meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
   .meta button { padding: 2px 8px; font-size: 13px; }
-  .dirty textarea { border-color: var(--accent); }
-  .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; color: var(--muted); font-size: 13px; }
+  .switch { position: relative; width: 36px; height: 20px; flex: none; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .switch span { position: absolute; inset: 0; background: var(--line); border-radius: 99px; transition: background .15s; pointer-events: none; }
+  .switch span::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(16px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #instructions { min-height: 140px; }
+  #status { color: var(--muted); font-size: 13px; }
+  pre#prompt {
+    white-space: pre-wrap; word-break: break-word; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; font-size: 12px; max-height: 480px; overflow: auto; margin: 8px 0 0;
+  }
+  details summary { cursor: pointer; color: var(--text-2); }
   #toast {
     position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
     padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none;
@@ -122,7 +139,7 @@
     <h1>gork</h1>
     <nav class="tabs">
       <a href="#stats" id="tabStats">Stats</a>
-      <a href="#memory" id="tabMemory">Memory</a>
+      <a href="#behaviour" id="tabBehaviour">Behaviour</a>
     </nav>
   </header>
 
@@ -157,12 +174,8 @@
         <div class="head"><h2>Messages gork sent per day</h2></div>
         <div class="chart" id="sentChart"></div>
       </div>
-      <div class="card">
-        <div class="head"><h2>Most messages</h2><span class="sub" style="margin:0;font-size:13px">people, from the archive</span></div>
-        <div id="chatters"></div>
-      </div>
-      <div class="card">
-        <div class="head"><h2>Busiest channels</h2><span class="sub" style="margin:0;font-size:13px">all messages, hover for gork's share</span></div>
+      <div class="card wide">
+        <div class="head"><h2>Where gork talks</h2><span class="sub" style="margin:0;font-size:13px">messages he sent</span></div>
         <div id="channels"></div>
       </div>
       <div class="card wide">
@@ -172,21 +185,29 @@
     </div>
   </section>
 
-  <section id="memoryView" hidden>
-    <p class="sub">Notes gork keeps about each server. He sees the newest ones every time he talks.</p>
+  <section id="behaviourView" hidden>
+    <p class="sub">Tell gork how to act. "Everywhere" applies in every server and DM; a server's own settings stack on top. Changes save by themselves and apply to his next message.</p>
     <div class="bar">
-      <select id="scope" aria-label="Server"></select>
-      <input id="filter" type="search" placeholder="Filter notes" aria-label="Filter notes">
+      <select id="bScope" aria-label="Where"></select>
+      <span id="status"></span>
     </div>
-    <form class="add" id="add">
-      <textarea id="newText" rows="1" maxlength="300" placeholder="Add a note, e.g. niko owes sam 20 bucks"></textarea>
-      <button class="primary" type="submit">Add</button>
-    </form>
-    <ul id="list"></ul>
-    <div class="foot">
-      <span id="count"></span>
-      <button class="danger" id="wipe" type="button">Wipe all notes</button>
+
+    <div class="section">
+      <div class="head"><h2>Behaviour modifiers</h2><button id="addMod" type="button">Add modifier</button></div>
+      <p class="hint">Switch them on and off. Each one is a line of instructions gork follows while it's on.</p>
+      <ul id="mods"></ul>
     </div>
+
+    <div class="section">
+      <div class="head"><h2>Specific instructions</h2></div>
+      <p class="hint">Anything else he should know or do here, in plain words. E.g. "niko is the server owner, never roast his cat".</p>
+      <textarea id="instructions" maxlength="8000" placeholder="No extra instructions"></textarea>
+    </div>
+
+    <details id="preview">
+      <summary>Show the full prompt gork gets here</summary>
+      <pre id="prompt"></pre>
+    </details>
   </section>
 </main>
 <div id="tip" hidden></div>
@@ -232,12 +253,12 @@ function el(tag, attrs = {}, ...kids) {
 
 // ---------------------------------------------------------------- tabs
 function showTab() {
-  const memory = location.hash === '#memory';
-  $('statsView').hidden = memory;
-  $('memoryView').hidden = !memory;
-  $('tabStats').toggleAttribute('aria-current', !memory);
-  $('tabMemory').toggleAttribute('aria-current', memory);
-  if (memory) loadScopes().then(loadNotes).catch((e) => toast(e.message));
+  const behaviour = location.hash === '#behaviour';
+  $('statsView').hidden = behaviour;
+  $('behaviourView').hidden = !behaviour;
+  $('tabStats').toggleAttribute('aria-current', !behaviour);
+  $('tabBehaviour').toggleAttribute('aria-current', behaviour);
+  if (behaviour) loadBehaviour().catch((e) => toast(e.message));
   else loadStats();
 }
 addEventListener('hashchange', showTab);
@@ -278,14 +299,12 @@ function renderStats() {
   const d = statsData;
   const t = d.totals;
   const tokens = t.input + t.output;
-  const span = days === 1 ? 'last 24h' : `last ${days} days`;
   const tiles = [
     ['API cost', money(t.cost), `${money(d.lifetime.cost)} all time${t.historyCost ? ` · ${money(t.historyCost)} of it estimated from before tracking` : ''}${t.uncosted ? ` · ${n0.format(t.uncosted)} calls unpriced` : ''}`],
     ['Tokens', compact.format(tokens), `${compact.format(t.input)} in · ${compact.format(t.output)} out${t.cached ? ` · ${compact.format(t.cached)} cached` : ''}${t.estimated ? ` · ${t.estimated === t.calls ? 'all' : pct(t.estimated, t.calls) + ' of calls'} estimated` : ''}`],
     ['Messages sent', n0.format(t.sent), `${n0.format(t.replies)} replies · ${n0.format(t.sent - t.replies)} plain`],
     ['Model calls', n0.format(t.calls), `${t.ms ? `${(t.ms / 1000).toFixed(1)}s avg` : '–'}${t.failed ? ` · ${n0.format(t.failed)} failed` : ''}${t.historyCalls ? ` · ${n0.format(t.historyCalls)} rebuilt from history` : ''}`],
     ['Talked', pct(t.spoke, t.turns), `spoke in ${n0.format(t.spoke)} of ${n0.format(t.turns)} looks · ${n0.format(t.pinged)} pings`],
-    ['Messages seen', compact.format(t.seen), `in the archive, ${span}`],
   ];
   $('tiles').replaceChildren(...tiles.map(([label, value, note]) =>
     el('div', { class: 'tile' }, el('div', { class: 'label', text: label }), el('div', { class: 'value', text: value }), el('div', { class: 'note', text: note }))));
@@ -296,10 +315,9 @@ function renderStats() {
   barChart($('costChart'), d.daily, [{ key: 'cost', label: 'Cost', color: 'var(--series-1)' }], money, 160);
   barChart($('sentChart'), d.daily, [{ key: 'sent', label: 'Messages', color: 'var(--series-1)' }], n0.format, 160);
 
-  rankList($('chatters'), d.topChatters.map((c) => ({ name: c.name, value: c.count })));
   rankList($('channels'), d.topChannels.map((c) => ({
     name: c.name, sub: !statsData.servers.find((s) => s.id === $('statsScope').value) && c.server ? c.server : '',
-    value: c.count, extra: c.gork ? `gork ${pct(c.gork, c.count)}` : '',
+    value: c.count,
   })));
   modelsTable(d.models);
 }
@@ -365,13 +383,13 @@ function niceMax(v) {
 }
 
 function rankList(host, rows) {
-  if (!rows.length) { host.replaceChildren(el('div', { class: 'empty', text: 'Nothing in the archive for this range.' })); return; }
+  if (!rows.length) { host.replaceChildren(el('div', { class: 'empty', text: 'Nothing in this range.' })); return; }
   const max = Math.max(...rows.map((r) => r.value));
   host.replaceChildren(el('table', { class: 'rank' }, el('tbody', {}, ...rows.map((r) =>
     el('tr', {},
       el('td', { class: 'name', title: r.name }, r.name, r.sub ? el('small', { text: ` · ${r.sub}` }) : ''),
       el('td', {}, el('div', { class: 'track' }, el('div', { class: 'fill', style: `width:${(r.value / max) * 100}%` }))),
-      el('td', { class: 'num', text: compact.format(r.value), title: `${n0.format(r.value)}${r.extra ? ` · ${r.extra}` : ''}` }),
+      el('td', { class: 'num', text: compact.format(r.value), title: n0.format(r.value) }),
     )))));
 }
 
@@ -382,7 +400,7 @@ function modelsTable(models) {
     el('thead', {}, el('tr', {}, ...head.map((h, i) => el('th', { class: i > 1 ? 'r' : '', text: h })))),
     el('tbody', {}, ...models.map((m) => el('tr', {},
       el('td', { text: m.model }),
-      el('td', { text: m.kind === 'notes' ? 'memory rebuild' : m.kind === 'history' ? 'chat, before tracking (est.)' : 'chat' }),
+      el('td', { text: m.kind === 'notes' ? 'memory rebuild (old)' : m.kind === 'history' ? 'chat, before tracking (est.)' : 'chat' }),
       el('td', { class: 'r', text: n0.format(m.calls) }),
       el('td', { class: 'r', text: compact.format(m.input) }),
       el('td', { class: 'r', text: compact.format(m.output) }),
@@ -411,112 +429,92 @@ addEventListener('resize', () => {
 });
 setInterval(() => { if (!$('statsView').hidden && !document.hidden) loadStats(); }, 60_000);
 
-// ---------------------------------------------------------------- memory
-let info = { scopes: [], inPrompt: 40, max: 200 };
-let notes = [];
-const fmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+// ---------------------------------------------------------------- behaviour
+let behaviour = { modifiers: [], instructions: '' };
+let saveTimer;
+let pending = null;
 
-async function loadScopes() {
-  info = await api('/api/scopes');
-  const sel = $('scope');
-  const keep = sel.value || store.get('scope');
-  sel.replaceChildren(...info.scopes.map((s) => new Option(`${s.name} (${s.count})`, s.id)));
-  if (keep && info.scopes.some((s) => s.id === keep)) sel.value = keep;
+async function loadBehaviour() {
+  const sel = $('bScope');
+  const scope = sel.value || store.get('bScope') || 'global';
+  const data = await api(`/api/behavior?scope=${scope}`);
+  sel.replaceChildren(...data.scopes.map((s) => new Option(s.name, s.id)));
+  sel.value = data.scopes.some((s) => s.id === scope) ? scope : 'global';
+  if (sel.value !== scope) return loadBehaviour();
+  behaviour = data.behavior;
+  $('status').textContent = '';
+  renderMods();
+  $('instructions').value = behaviour.instructions;
+  if ($('preview').open) loadPrompt();
 }
 
-async function loadNotes() {
-  const scope = $('scope').value;
-  notes = scope ? (await api(`/api/notes?scope=${scope}`)).notes : [];
-  renderNotes();
-}
-
-function renderNotes() {
-  const q = $('filter').value.trim().toLowerCase();
-  // notes come oldest first; the newest `inPrompt` are the ones gork sees
-  const seen = new Set(notes.slice(-info.inPrompt).map((n) => n.id));
-  const shown = notes.filter((n) => !q || n.text.toLowerCase().includes(q)).reverse();
-  const list = $('list');
+function renderMods() {
+  const list = $('mods');
   list.replaceChildren();
-  if (!shown.length) {
-    list.append(el('li', { class: 'note empty', text: $('scope').value ? (q ? 'Nothing matches.' : 'He remembers nothing here yet.') : 'No servers.' }));
-  }
-  for (const n of shown) list.append(noteRow(n, seen.has(n.id)));
-  $('count').textContent = `${notes.length} of max ${info.max} notes`;
-  $('wipe').disabled = !notes.length;
+  if (!behaviour.modifiers.length) list.append(el('li', { class: 'mod empty', text: 'No modifiers here.' }));
+  for (const m of behaviour.modifiers) list.append(modRow(m));
 }
 
-function noteRow(n, inPrompt) {
-  const save = el('button', { text: 'Save' });
-  save.hidden = true;
-  const del = el('button', { class: 'danger', text: 'Delete' });
-  const text = el('textarea', { maxlength: 300, rows: Math.max(1, Math.ceil(n.text.length / 80)) });
-  text.value = n.text;
-  const li = el('li', { class: 'note' },
-    el('div', { class: 'meta' },
-      el('span', { text: `#${n.id} · ${fmt.format(n.created_at)}` }),
-      inPrompt ? el('span', { class: 'chip', text: 'in prompt', title: 'gork sees this note every turn' }) : '',
-      el('span', { class: 'spacer' }), save, del),
+function modRow(m) {
+  const toggle = el('input', { type: 'checkbox', 'aria-label': `Turn ${m.name || 'modifier'} on` });
+  toggle.checked = m.on;
+  const name = el('input', { type: 'text', maxlength: 60, placeholder: 'Name', 'aria-label': 'Name' });
+  name.value = m.name;
+  const text = el('textarea', { maxlength: 2000, rows: Math.max(1, Math.ceil(m.text.length / 90)), placeholder: 'What gork should do while this is on' });
+  text.value = m.text;
+  const del = el('button', { class: 'danger', type: 'button', text: 'Delete' });
+  const li = el('li', { class: `mod${m.on ? '' : ' off'}` },
+    el('div', { class: 'meta' }, el('label', { class: 'switch' }, toggle, el('span')), name, del),
     text);
-  text.addEventListener('input', () => {
-    const dirty = text.value.trim() !== n.text;
-    li.classList.toggle('dirty', dirty);
-    save.hidden = !dirty;
-  });
-  text.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!save.hidden) save.click(); }
-    if (e.key === 'Escape') { text.value = n.text; text.dispatchEvent(new Event('input')); }
-  });
-  save.addEventListener('click', async () => {
-    try {
-      await api(`/api/notes/${n.id}`, { method: 'PATCH', body: { text: text.value } });
-      n.text = text.value.replace(/\s+/g, ' ').trim();
-      text.value = n.text;
-      text.dispatchEvent(new Event('input'));
-      toast('saved');
-    } catch (e) { toast(e.message); }
-  });
-  del.addEventListener('click', async () => {
-    try {
-      await api(`/api/notes/${n.id}`, { method: 'DELETE' });
-      notes = notes.filter((x) => x.id !== n.id);
-      renderNotes();
-      toast('deleted');
-      loadScopes();
-    } catch (e) { toast(e.message); }
+  toggle.addEventListener('change', () => { m.on = toggle.checked; li.classList.toggle('off', !m.on); save(0); });
+  name.addEventListener('input', () => { m.name = name.value; save(); });
+  text.addEventListener('input', () => { m.text = text.value; save(); });
+  del.addEventListener('click', () => {
+    if ((m.name || m.text) && !confirm(`Delete "${m.name || 'this modifier'}"?`)) return;
+    behaviour.modifiers = behaviour.modifiers.filter((x) => x !== m);
+    renderMods();
+    save(0);
   });
   return li;
 }
 
-$('scope').addEventListener('change', () => {
-  store.set('scope', $('scope').value);
-  loadNotes().catch((e) => toast(e.message));
-});
-$('filter').addEventListener('input', renderNotes);
+function save(delay = 700) {
+  $('status').textContent = 'unsaved…';
+  clearTimeout(saveTimer);
+  // pinned now, so switching servers first can't save into the wrong one
+  const scope = $('bScope').value;
+  const body = behaviour;
+  pending = async () => {
+    pending = null;
+    try {
+      await api(`/api/behavior?scope=${scope}`, { method: 'PUT', body });
+      $('status').textContent = 'saved';
+      if ($('preview').open) loadPrompt();
+    } catch (e) { $('status').textContent = 'not saved'; toast(e.message); }
+  };
+  saveTimer = setTimeout(() => pending?.(), delay);
+}
 
-$('add').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const text = $('newText').value.trim();
-  if (!text || !$('scope').value) return;
-  try {
-    await api('/api/notes', { method: 'POST', body: { scope: $('scope').value, text } });
-    $('newText').value = '';
-    await Promise.all([loadNotes(), loadScopes()]);
-    toast('added');
-  } catch (e) { toast(e.message); }
-});
-$('newText').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('add').requestSubmit(); }
-});
+async function loadPrompt() {
+  try { $('prompt').textContent = (await api(`/api/prompt?scope=${$('bScope').value}`)).prompt; }
+  catch (e) { toast(e.message); }
+}
 
-$('wipe').addEventListener('click', async () => {
-  const name = $('scope').selectedOptions[0]?.textContent;
-  if (!confirm(`Delete all ${notes.length} notes for ${name}? This can't be undone.`)) return;
-  try {
-    const { removed } = await api(`/api/notes?scope=${$('scope').value}`, { method: 'DELETE' });
-    await Promise.all([loadNotes(), loadScopes()]);
-    toast(`wiped ${removed} notes`);
-  } catch (e) { toast(e.message); }
+$('bScope').addEventListener('change', async () => {
+  store.set('bScope', $('bScope').value);
+  // send the last server's unsaved edit before loading the next one
+  clearTimeout(saveTimer);
+  if (pending) await pending();
+  loadBehaviour().catch((e) => toast(e.message));
 });
+$('addMod').addEventListener('click', () => {
+  const m = { id: Math.random().toString(36).slice(2, 10), name: '', text: '', on: true };
+  behaviour.modifiers.push(m);
+  renderMods();
+  $('mods').lastElementChild.querySelector('input[type=text]').focus();
+});
+$('instructions').addEventListener('input', () => { behaviour.instructions = $('instructions').value; save(); });
+$('preview').addEventListener('toggle', () => { if ($('preview').open) loadPrompt(); });
 
 showTab();
 </script>

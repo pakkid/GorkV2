@@ -22,7 +22,6 @@ import {
 import { logger } from './log';
 import { loadMembers } from './members';
 import { modeOf } from './settings';
-import { backfillHistory } from './stats';
 import { startWeb } from './web/server';
 
 const log = logger('core');
@@ -40,11 +39,6 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
 });
 
-function guildOf(channelId: string) {
-  const ch = client.channels.cache.get(channelId);
-  return ch && 'guildId' in ch ? ch.guildId : null;
-}
-
 const pick = <T>(arr: readonly T[]) => arr[Math.floor(Math.random() * arr.length)]!;
 
 function rotatePresence() {
@@ -57,7 +51,6 @@ client.once(Events.ClientReady, (c) => {
   log.info(`logged in as ${c.user.tag} in ${c.guilds.cache.size} servers`);
   rotatePresence();
   startWeb(c);
-  backfillHistory(c.user.id, guildOf);
   // one at a time, discord rate limits member chunk requests
   void (async () => {
     for (const guild of c.guilds.cache.values()) await loadMembers(guild);
@@ -69,7 +62,7 @@ client.once(Events.ClientReady, (c) => {
 client.on(Events.MessageCreate, async (message: Message) => {
   try {
     if (message.partial) message = await message.fetch();
-    // channels set to none are invisible to gork: not read, not archived
+    // channels set to none are invisible to gork
     if (modeOf(message) === 'none') return;
     const msg = recordMessage(message);
     if (!msg || message.author.bot || msg.self) return;

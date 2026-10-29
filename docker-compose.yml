@@ -23,7 +23,7 @@ services:
       TZ: ${TZ:-America/New_York}
       GORK_LOCATION: ${GORK_LOCATION:-New York, USA}
       WEB_PORT: 8787
-    # memory editor web ui. set WEB_BIND to this host's LAN ip (e.g. 192.168.1.20) so it
+    # stats + behaviour editor web ui. set WEB_BIND to this host's LAN ip (e.g. 192.168.1.20) so it
     # only listens there; gork also refuses anything that isn't a private-network address
     ports:
       - "${WEB_BIND:-0.0.0.0}:${WEB_HOST_PORT:-8787}:8787"

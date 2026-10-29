@@ -46,14 +46,8 @@ const prompt = contextPrompt({
   transcript: transcript.text,
   pinged: true,
   interrupted: [],
-  searches: [],
-  said: [],
   recent: log.messages.filter((m) => m.self).map((m) => m.content),
   members: 'Alex (@alex) <@111>\nSam (@sam) <@222>\nNikolai (Niko B, @niko.b) <@333>',
-  notes: [{ id: 1, text: 'alex hosts the minecraft server', created_at: now - 9 * 86_400_000 }],
-  now: Date.now(),
-  canSearch: true,
-  ratings: 0,
 });
 
 console.log(`model: ${env.AI_MODEL} via ${env.AI_PROVIDER} ${env.AI_BASE_URL ?? ''}\n`);

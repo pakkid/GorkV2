@@ -10,15 +10,50 @@ export type ResponseMode = 'relevance' | 'ping' | 'ping+keyword' | 'none';
 export type SafetyMode = 'unfiltered' | 'safe';
 export type Scope = 'guild' | 'channel';
 
+/** A switchable chunk of instructions for gork, written in the web ui. */
+export interface Modifier {
+  id: string;
+  name: string;
+  text: string;
+  on: boolean;
+}
+
+/** What the owner told gork, for everywhere ('global') or one server. */
+export interface Behavior {
+  modifiers: Modifier[];
+  instructions: string;
+}
+
 interface Data {
   mode: Record<string, ResponseMode>;
   safety: Record<string, SafetyMode>;
   // channel id -> silenced until (epoch ms)
   silenced: Record<string, number>;
+  // 'global' or a guild id
+  behavior: Record<string, Behavior>;
 }
 
+// starting points, all off; edit or delete them in the web ui
+const presets: Modifier[] = [
+  { id: 'meaner', name: 'Meaner', text: 'Be meaner than usual. Roast people harder, less mercy.', on: false },
+  { id: 'softer', name: 'Softer', text: 'Be nicer than usual. Still sarcastic, but warmer and less cutting.', on: false },
+  { id: 'yapper', name: 'Yapper', text: 'Chime in more often, even when nobody pinged you.', on: false },
+  { id: 'lurker', name: 'Lurker', text: 'Talk a lot less. Unless someone pinged you, stay quiet almost always.', on: false },
+  {
+    id: 'helpful',
+    name: 'Actually helpful',
+    text: "Give correct answers to real questions. Keep the attitude, drop the wrong-answer bit.",
+    on: false,
+  },
+];
+
 const file = join(env.DATA_DIR, 'settings.json');
-let data: Data = { mode: {}, safety: {}, silenced: {} };
+let data: Data = {
+  mode: {},
+  safety: {},
+  silenced: {},
+  behavior: { global: { modifiers: presets, instructions: '' } },
+};
 
 try {
   data = { ...data, ...JSON.parse(readFileSync(file, 'utf8')) };
@@ -105,7 +140,28 @@ export const settings = {
     delete data.silenced[channelId];
     save();
   },
+
+  behavior(scope: string): Behavior {
+    return data.behavior[scope] ?? { modifiers: [], instructions: '' };
+  },
+  setBehavior(scope: string, behavior: Behavior) {
+    if (!behavior.modifiers.length && !behavior.instructions && scope !== 'global') {
+      delete data.behavior[scope];
+    } else {
+      data.behavior[scope] = behavior;
+    }
+    save();
+  },
 };
+
+/** Everything the owner wants from gork here: global first, then the server's own. */
+export function ownerRules(guildId: string | null) {
+  const scopes = guildId ? [settings.behavior('global'), settings.behavior(guildId)] : [settings.behavior('global')];
+  return {
+    modifiers: scopes.flatMap((b) => b.modifiers.filter((m) => m.on && m.text.trim()).map((m) => m.text.trim())),
+    instructions: scopes.map((b) => b.instructions.trim()).filter(Boolean),
+  };
+}
 
 /** Effective mode for a message: whitelisted server channels, and DMs only with the owner. */
 export function modeOf(message: Message | PartialMessage): ResponseMode {

@@ -13,9 +13,10 @@ A rewrite of [gork](https://github.com/techwithanirudh/gork): a sarcastic, human
 | Sending | waits for the whole answer | **each message is sent the moment it's generated** |
 | Bursts | one LLM call per message | messages are batched (250ms after a ping, 1.5s otherwise) and answered together |
 | Reply target | often wrong | model points at transcript `#numbers`, can reply to any message |
-| Memory | Pinecone vector memories | **every message in the channel**, archived to SQLite (`data/archive.db`) and crawled back to the channel's first message in the background; gork searches it himself when someone brings up old stuff, and keeps his own notes about people (`remember`/`forget`) that he sees every turn |
+| Memory | Pinecone vector memories | **none**. He only sees the last ~120 messages of a channel, held in RAM and gone on restart. Nothing people say is written to disk |
 | Interruptions | ignored | talk over him mid-reply and he stops, then gets mad at you |
-| Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key; settings saved to `data/settings.json` |
+| Personality | v1 prompts | **the same v1 prompts** (core, personality, examples, when to talk, safety), plus behaviour modifiers and instructions you set in the web ui |
+| Infra | Redis + Pinecone + Deepgram + Exa + Langfuse | just Discord + one OpenRouter-compatible key; settings saved to `data/settings.json`, stats to `data/gork.db` |
 
 ## Setup
 
@@ -36,16 +37,16 @@ Any OpenRouter-compatible endpoint works (`AI_BASE_URL`), including the Hack Clu
 3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`, `GORK_LOCATION`). If the repo is private, turn on **Authentication** with a GitHub token.
 4. Deploy. Slash commands register themselves on startup.
 
-Settings and the message archive live in the `gork-data` volume, so redeploys keep his memory. To update, hit **Pull and redeploy** on the stack (or enable GitOps auto-updates).
+Settings and stats live in the `gork-data` volume, so redeploys keep them. To update, hit **Pull and redeploy** on the stack (or enable GitOps auto-updates).
 
 Plain Docker works the same: put the variables in `.env` and run `docker compose up -d --build`.
 
-## Stats and memory editor
+## Stats and behaviour editor
 
 Gork serves a small web page on port `8787` (`WEB_PORT`, `0` turns it off). Open `http://<server's LAN ip>:8787`.
 
-- **Stats**: API cost, tokens, model calls, messages he sent, how often he talks, the people and channels with the most messages, and a per-model breakdown, per server and time range. Cost comes from OpenRouter when it reports it; otherwise from the price table in `src/config.ts` (the default models are filled in), which `AI_PRICES` (`model=in/out,...` in $ per million tokens) can add to or override. Gateways that don't report token counts while streaming get estimates from text length, marked as estimated. On every start, usage from before tracking existed is estimated from gork's own messages in the archive (calls where he stayed quiet left no trace, so that part is a lower bound).
-- **Memory**: read, add, edit and delete his notes.
+- **Stats**: API cost, tokens, model calls, messages he sent, how often he talks, the channels he talks in most, and a per-model breakdown, per server and time range. Cost comes from OpenRouter when it reports it; otherwise from the price table in `src/config.ts` (the default models are filled in), which `AI_PRICES` (`model=in/out,...` in $ per million tokens) can add to or override. Gateways that don't report token counts while streaming get estimates from text length, marked as estimated.
+- **Behaviour**: modifiers you switch on and off (a few presets come with it, all off) and free-text instructions, for everywhere or per server. Server settings stack on top of "Everywhere". Changes apply to his next message; "Show the full prompt" shows exactly what he gets.
 
 It's LAN only: requests from anything other than a private, loopback or link-local address are refused, as are requests whose `Host` isn't an ip, `localhost`, a bare hostname or a `.local`/`.lan`/`.home.arpa`/`.internal` name. There's no password, so anyone on your network can use it. In Docker, set `WEB_BIND` to the host's LAN ip so the port isn't published on other interfaces either. Don't put it behind a reverse proxy on the same machine: everything would look local.
 
@@ -59,10 +60,7 @@ Gork starts with **no channel access**. Whitelist a channel with `/mode set scop
 | `/safety set/show/clear` | `unfiltered` or `safe` (SFW) per server/channel (bot owner only) |
 | `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up (bot owner only) |
 | `/ping` | latency check |
-| `/memory show` | list everything gork has noted about the server (bot owner only) |
-| `/memory wipe` | delete his notes; `archive:True` also deletes the archived chat of active channels (bot owner only) |
-| `/memory reinit` | re-download the full history of every active channel, then rebuild his notes from the last 20k messages. Slow, and costs a model call per ~30k chars (bot owner only) |
 
-Start a message with `//` to hide it from gork (it's never archived either). Deleted messages are removed from the archive.
+Start a message with `//` to hide it from gork.
 
 Tuning knobs (context size, debounce, rate limits) live in `src/config.ts`.

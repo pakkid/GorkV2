@@ -40,15 +40,10 @@ if (env.AI_PROVIDER === 'openrouter') {
 
 // flat + nullable instead of a union so strict json-schema providers accept it
 export const actionSchema = z.object({
-  type: z.enum(['reply', 'send', 'search', 'remember', 'forget']),
+  type: z.enum(['reply', 'send']),
   // a string: discord ids are too big for a js number
-  to: z
-    .string()
-    .nullable()
-    .describe('message id to reply to (reply), memory note number (forget), null otherwise'),
-  text: z
-    .string()
-    .describe('the message text, the keywords to search for, or the note to remember'),
+  to: z.string().nullable().describe('message id to reply to (reply), null otherwise'),
+  text: z.string().describe('the message text'),
 });
 
 export type Action = z.infer<typeof actionSchema>;
@@ -214,8 +209,8 @@ function parseLoose(raw: string): Action[] | undefined {
     }
     const a = item as Record<string, unknown>;
     const text = typeof a.text === 'string' ? a.text : typeof a.content === 'string' ? a.content : '';
-    const type = (['reply', 'search', 'remember', 'forget'] as const).find((t) => t === a.type) ?? 'send';
-    if (!text && type !== 'forget') continue;
+    const type = a.type === 'reply' ? 'reply' : 'send';
+    if (!text) continue;
     const to = String(a.to ?? '').replace(/^#/, '').trim();
     out.push({ type, to: /^\d+$/.test(to) ? to : null, text });
   }

@@ -1,6 +1,5 @@
-import { db } from './archive';
-import { systemPrompt } from './ai/prompt';
-import { history, prices, timezone } from './config';
+import { prices, timezone } from './config';
+import { db } from './db';
 import { env } from './env';
 import { logger } from './log';
 
@@ -34,7 +33,7 @@ db.exec(`
     guild_id TEXT,
     channel_id TEXT NOT NULL,
     kind TEXT NOT NULL,
-    -- 1 = reconstructed from the archive, from before tracking existed
+    -- 1 = reconstructed from the old message archive, from before tracking existed
     backfill INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS sent_at ON sent (at);
@@ -52,7 +51,7 @@ db.exec(`
 `);
 
 export interface Where {
-  kind: 'chat' | 'notes';
+  kind: 'chat';
   guildId?: string | null;
   channelId?: string | null;
 }
@@ -116,102 +115,6 @@ export function recordSent(guildId: string | null, channelId: string, kind: stri
   safely(() => insertSent.run(Date.now(), guildId, channelId, kind));
 }
 
-// ---------------------------------------------------------------------------
-// estimating the past: gork's own messages are in the archive, so the turns where he
-// talked can be rebuilt from them. calls where he stayed quiet left no trace and aren't counted
-
-const liveStart = db.prepare(`SELECT MIN(at) t FROM usage WHERE kind != 'history'`);
-const sentStart = db.prepare('SELECT MIN(at) t FROM sent WHERE backfill = 0');
-const clearHistory = db.prepare(`DELETE FROM usage WHERE kind = 'history'`);
-const clearSent = db.prepare('DELETE FROM sent WHERE backfill = 1');
-const gorkMessages = db.prepare(`
-  SELECT channel_id, length(body) len, created_at, reply_to FROM messages
-  WHERE author_id = ? AND created_at < ? ORDER BY channel_id, created_at
-`);
-const contextBefore = db.prepare(`
-  SELECT SUM(len) chars FROM (
-    SELECT length(body) + 80 len FROM messages
-    WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?
-  )
-`);
-const insertBackfillSent = db.prepare(
-  'INSERT INTO sent (at, guild_id, channel_id, kind, backfill) VALUES (?, ?, ?, ?, 1)'
-);
-
-/**
- * Rebuild estimated usage for everything gork said before tracking started. Safe to rerun:
- * it replaces its own previous estimate (the archive keeps filling in as it crawls).
- */
-export function backfillHistory(selfId: string, guildOf: (channelId: string) => string | null) {
-  const started = Date.now();
-  const cutoff = Math.min(
-    num((liveStart.get() as { t: unknown }).t) || Date.now(),
-    num((sentStart.get() as { t: unknown }).t) || Date.now()
-  );
-  const rows = gorkMessages.all(selfId, cutoff) as {
-    channel_id: string;
-    len: number;
-    created_at: number;
-    reply_to: string | null;
-  }[];
-  const system = systemPrompt(false).length;
-  const model = env.AI_MODEL;
-  let turns = 0;
-  let cost = 0;
-
-  db.exec('BEGIN');
-  try {
-    clearHistory.run();
-    clearSent.run();
-    // messages from one turn go out a few seconds apart; a longer gap is a new turn
-    let turn: { channel: string; at: number; last: number; out: number } | undefined;
-    const flush = () => {
-      if (!turn) return;
-      const context = Math.min(
-        num((contextBefore.get(turn.channel, turn.at, history.contextMessages) as { chars: unknown }).chars),
-        history.contextChars
-      );
-      const u: Usage = {
-        model,
-        // + roughly what the member list, notes and the notes around the transcript add
-        input: Math.ceil((system + context + 1500) / 4),
-        output: Math.ceil(turn.out / 4),
-        cached: 0,
-        reasoning: 0,
-        ms: 0,
-        ok: true,
-        estimated: true,
-      };
-      const c = costOf(u);
-      cost += c ?? 0;
-      turns++;
-      insertUsage.run(
-        turn.at, 'history', guildOf(turn.channel), turn.channel, model,
-        u.input, u.output, 0, 0, c, 0, 1, 1
-      );
-    };
-    for (const m of rows) {
-      if (!turn || turn.channel !== m.channel_id || m.created_at - turn.last > 20_000) {
-        flush();
-        turn = { channel: m.channel_id, at: m.created_at, last: m.created_at, out: 30 };
-      }
-      turn.last = m.created_at;
-      // the message plus its json wrapping
-      turn.out += m.len + 45;
-      insertBackfillSent.run(m.created_at, guildOf(m.channel_id), m.channel_id, m.reply_to ? 'reply' : 'send');
-    }
-    flush();
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    log.warn('history backfill failed', error);
-    return;
-  }
-  log.info(
-    `estimated ${turns} past turns from ${rows.length} archived messages (~$${cost.toFixed(4)}, ${Date.now() - started}ms)`
-  );
-}
-
 export function recordTurn(guildId: string | null, channelId: string, pinged: boolean, spoke: boolean) {
   safely(() => insertTurn.run(Date.now(), guildId, channelId, pinged ? 1 : 0, spoke ? 1 : 0));
 }
@@ -224,8 +127,6 @@ const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: timezone });
 interface Range {
   since: number;
   guildId?: string;
-  // channels of that server, for the archive (which doesn't know about servers)
-  channelIds?: string[];
 }
 
 function filter(r: Range, guildCol: string) {
@@ -234,18 +135,11 @@ function filter(r: Range, guildCol: string) {
     : { sql: '', args: [] as string[] };
 }
 
-function channelFilter(r: Range) {
-  if (!r.guildId) return { sql: '', args: [] as string[] };
-  const ids = r.channelIds?.length ? r.channelIds : ['-'];
-  return { sql: ` AND channel_id IN (${ids.map(() => '?').join(',')})`, args: ids };
-}
-
 const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0) || 0);
 
 /** Everything the stats page shows, for one server (or all) since a point in time. */
-export function summary(r: Range, selfId: string) {
+export function summary(r: Range) {
   const g = filter(r, 'guild_id');
-  const c = channelFilter(r);
 
   const totals = db
     .prepare(`
@@ -314,27 +208,14 @@ export function summary(r: Range, selfId: string) {
     if (d) d.sent += num(row.n);
   }
 
-  const topChatters = (
-    db
-      .prepare(`
-        SELECT author_id, author, MAX(created_at) last, COUNT(*) n FROM messages
-        WHERE created_at >= ? AND author_id != ?${c.sql}
-        GROUP BY author_id ORDER BY n DESC LIMIT 10`)
-      .all(r.since, selfId, ...c.args) as Record<string, unknown>[]
-  ).map((row) => ({ id: String(row.author_id), name: String(row.author), count: num(row.n) }));
-
   const topChannels = (
     db
       .prepare(`
-        SELECT channel_id, COUNT(*) n, SUM(author_id = ?) gork FROM messages
-        WHERE created_at >= ?${c.sql}
+        SELECT channel_id, COUNT(*) n FROM sent
+        WHERE at >= ?${g.sql}
         GROUP BY channel_id ORDER BY n DESC LIMIT 10`)
-      .all(selfId, r.since, ...c.args) as Record<string, unknown>[]
-  ).map((row) => ({ id: String(row.channel_id), count: num(row.n), gork: num(row.gork) }));
-
-  const seen = db
-    .prepare(`SELECT COUNT(*) n, SUM(author_id = ?) gork FROM messages WHERE created_at >= ?${c.sql}`)
-    .get(selfId, r.since, ...c.args) as Record<string, unknown>;
+      .all(r.since, ...g.args) as Record<string, unknown>[]
+  ).map((row) => ({ id: String(row.channel_id), count: num(row.n) }));
 
   return {
     totals: {
@@ -355,13 +236,10 @@ export function summary(r: Range, selfId: string) {
       turns: num(turns.n),
       spoke: num(turns.spoke),
       pinged: num(turns.pinged),
-      seen: num(seen.n),
-      gorkArchived: num(seen.gork),
     },
     lifetime: { tokens: num(lifetime.tokens), cost: num(lifetime.cost) },
     daily: [...days].map(([day, d]) => ({ day, ...d })),
     models,
-    topChatters,
     topChannels,
   };
 }
