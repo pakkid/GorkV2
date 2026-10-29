@@ -164,7 +164,7 @@ const tools = (web: boolean) => `\
 - reply: a discord reply to the message whose id is "to".
 - send: a plain message in the channel, "to" = null.
 - react: add emoji reactions to the message whose id is "to". text = 1-3 emojis separated by spaces (unicode, or server emojis from <emojis> written as :name:). A react can be your whole answer, or go with a message. Like {"type":"react","to":"1301234567890123456","text":"💀"}. If someone asks you to react, actually use react, don't just say it.
-${web ? `- search: search the web for current info outside Discord (news, scores, prices, releases, stuff you don't know). text = the query, "to" = null. You get the results back in <web-results> and act again. You can send a quick "hold on" first. Only search when it's actually worth it, it's slower.
+${web ? `- search: search the web for current info outside Discord (news, scores, prices, releases, stuff you don't know). text = the query, "to" = null. You get the results back in <web-results> and act again. Like {"type":"search","to":null,"text":"nasa artemis news this week"}. If someone asks you to look something up, or you say you'll check, put the search element in this same answer (a quick "hold on" message before it is fine). Only search when it's actually worth it, it's slower.
 ` : ''}
 Emojis are fine in messages when you feel like it, just no emoji clutter.
 </tools>`;
