@@ -32,6 +32,10 @@ if (env.AI_PROVIDER === 'openrouter') {
     apiKey: env.AI_API_KEY,
     baseURL: env.AI_BASE_URL ?? 'https://api.openai.com/v1',
     includeUsage: true,
+    // gateways that translate claude from the anthropic format reject response_format.
+    // the prompt spells out the json shape anyway, so claude streams it fine without
+    transformRequestBody: (body) =>
+      /claude/i.test(String(body.model)) ? { ...body, response_format: undefined } : body,
   });
   modelFor = (id) => gateway.chatModel(id);
   // only sent when asked for; unknown gateways may reject it
