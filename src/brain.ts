@@ -40,6 +40,29 @@ interface ChannelState {
 
 const states = new Map<string, ChannelState>();
 
+// channels the owner is driving from the web ui. gork reads along but never answers.
+// RAM only, so a restart hands every channel back to him
+const takenOver = new Set<string>();
+
+export function isTakenOver(channelId: string) {
+  return takenOver.has(channelId);
+}
+
+export function setTakeover(channelId: string, on: boolean) {
+  if (on) {
+    takenOver.add(channelId);
+    const state = states.get(channelId);
+    clearTimeout(state?.timer);
+    // stop him mid-sentence if he was already going
+    state?.abort?.abort();
+    return;
+  }
+  if (!takenOver.delete(channelId)) return;
+  // he wasn't there for it: what happened during the takeover is old news, not things to answer
+  const chLog = channelLog(channelId);
+  chLog.lastSeenId = chLog.messages.at(-1)?.id ?? chLog.lastSeenId;
+}
+
 const nowFmt = new Intl.DateTimeFormat('en-US', {
   timeZone: timezone,
   weekday: 'short',
@@ -97,7 +120,7 @@ export function onMessage(message: Message, msg: ChatMsg) {
 
   const isDM = !message.guild;
   const mode = modeOf(message);
-  if (mode === 'none') return;
+  if (mode === 'none' || takenOver.has(message.channelId)) return;
 
   const lower = message.content.toLowerCase();
   const named = keywords.some((k) => lower.includes(k));
@@ -153,6 +176,7 @@ async function run(state: ChannelState) {
   let stopTyping = () => {};
 
   try {
+    if (takenOver.has(state.id)) return;
     const now = Date.now();
     state.calls = state.calls.filter((t) => now - t < 60_000);
     if (state.calls.length >= limits.callsPerMinute && !urgent) {
@@ -275,7 +299,7 @@ async function run(state: ChannelState) {
     stopTyping();
     state.abort = undefined;
     state.running = false;
-    if (state.rerun) schedule(state, state.urgent);
+    if (state.rerun && !takenOver.has(state.id)) schedule(state, state.urgent);
   }
 }
 
@@ -434,6 +458,29 @@ async function react(channel: SendableChannels, guild: Guild | null, action: Act
     }
   }
   return reacted;
+}
+
+/**
+ * The owner talking as gork from the web ui. Same pings and emoji handling as his own
+ * messages, so "@niko" and ":pepe:" work, and it lands in the channel log like his own.
+ */
+export async function sendAs(channel: SendableChannels, content: string, replyTo?: string) {
+  const guild = 'guild' in channel ? channel.guild : null;
+  const guildId = guild?.id ?? null;
+  const text = linkMentions(customEmojis(content, guild), guild, channelLog(channel.id)).trim();
+  if (!text) return;
+  const [first, ...rest] = chunks(text);
+  const target = await resolveTarget(channel, replyTo ?? null);
+  if (target) {
+    await target.reply({ content: first!, allowedMentions: allowedMentions(first!), failIfNotExists: false });
+  } else {
+    await channel.send({ content: first!, allowedMentions: allowedMentions(first!) });
+  }
+  recordSent(guildId, channel.id, target ? 'reply' : 'send');
+  for (const part of rest) {
+    await channel.send({ content: part, allowedMentions: allowedMentions(part) });
+    recordSent(guildId, channel.id, 'send');
+  }
 }
 
 async function perform(

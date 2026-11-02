@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
-import type { Client } from 'discord.js';
+import { type Client, PermissionFlagsBits, type SendableChannels } from 'discord.js';
 import { env } from '../env';
 import { logger } from '../log';
 import { systemPrompt } from '../ai/prompt';
+import { isTakenOver, sendAs, setTakeover } from '../brain';
+import { type ChatMsg, channelLog } from '../history';
 import { type Behavior, type Modifier, ownerRules, settings } from '../settings';
 import { summary } from '../stats';
 import { syncTokenmaxxing, tokenmaxxingStatus } from '../tokenmaxxing';
@@ -90,6 +92,51 @@ function stats(client: Client, scope: string, days: number) {
   return body;
 }
 
+/** Every channel gork is allowed to talk in (mode isn't 'none') and can see, plus DMs with the owner. */
+function liveChannels(client: Client) {
+  const out: { id: string; name: string; server: string | null; channel: SendableChannels }[] = [];
+  for (const ch of client.channels.cache.values()) {
+    if (!ch.isSendable()) continue;
+    if (ch.isDMBased()) {
+      const owner = env.DISCORD_OWNER_ID;
+      if (owner && 'recipientId' in ch && ch.recipientId === owner) out.push({ id: ch.id, ...channelName(client, ch.id), channel: ch });
+      continue;
+    }
+    if (ch.isThread() && ch.archived) continue;
+    const parentId = ch.isThread() ? ch.parentId : null;
+    if (settings.mode(ch.guildId, ch.id, parentId) === 'none') continue;
+    const perms = ch.permissionsFor(client.user!);
+    if (!perms?.has(PermissionFlagsBits.ViewChannel) || !perms.has(PermissionFlagsBits.ReadMessageHistory)) continue;
+    out.push({ id: ch.id, ...channelName(client, ch.id), channel: ch });
+  }
+  return out.sort((a, b) => (a.server ?? '').localeCompare(b.server ?? '') || a.name.localeCompare(b.name));
+}
+
+function liveChannel(client: Client, id: string | null) {
+  return id ? liveChannels(client).find((c) => c.id === id)?.channel : undefined;
+}
+
+function liveMessage(client: Client, m: ChatMsg) {
+  const user = client.users.cache.get(m.authorId);
+  return {
+    id: m.id,
+    name: m.name,
+    username: m.username,
+    avatar: user?.displayAvatarURL({ size: 64, extension: 'png' }) ?? null,
+    bot: m.bot,
+    self: m.self,
+    content: m.content,
+    replyToId: m.replyToId ?? null,
+    replySnippet: m.replySnippet ?? null,
+    attachments: m.attachments,
+    extras: m.extras,
+    reactions: [...m.reactions],
+    createdAt: m.createdAt,
+    edited: m.edited,
+    deleted: m.deleted,
+  };
+}
+
 async function handle(client: Client, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
@@ -98,7 +145,7 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'content-security-policy':
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src https://cdn.discordapp.com https://media.discordapp.net; frame-ancestors 'none'",
       'x-frame-options': 'DENY',
       'referrer-policy': 'no-referrer',
     });
@@ -145,6 +192,44 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
     return send(res, 200, { prompt: systemPrompt(safe, ownerRules(guild?.id ?? null), canSearchWeb) });
   }
 
+  // live view: read gork's channels and talk as him
+  if (method === 'GET' && url.pathname === '/api/live/channels') {
+    const channels = liveChannels(client).map(({ id, name, server }) => ({ id, name, server, takeover: isTakenOver(id) }));
+    return send(res, 200, { channels });
+  }
+  if (url.pathname.startsWith('/api/live/')) {
+    const channel = liveChannel(client, url.searchParams.get('channel'));
+    if (!channel) return send(res, 404, { error: 'not a channel gork talks in' });
+
+    if (method === 'GET' && url.pathname === '/api/live/messages') {
+      const chLog = channelLog(channel.id);
+      await chLog.backfill(channel);
+      return send(res, 200, {
+        takeover: isTakenOver(channel.id),
+        messages: chLog.messages.map((m) => liveMessage(client, m)),
+      });
+    }
+    if (method === 'POST' && url.pathname === '/api/live/send') {
+      const body = await readJson(req);
+      const content = str(body.content, 8000);
+      const replyTo = str(body.replyTo, 25) || undefined;
+      if (!content.trim()) return send(res, 400, { error: 'empty message' });
+      await sendAs(channel, content, replyTo);
+      log.info(`owner sent a message as gork in ${channel.id} from the web ui`);
+      return send(res, 200, { ok: true });
+    }
+    if (method === 'POST' && url.pathname === '/api/live/typing') {
+      await channel.sendTyping().catch(() => {});
+      return send(res, 200, { ok: true });
+    }
+    if (method === 'PUT' && url.pathname === '/api/live/takeover') {
+      const on = (await readJson(req)).on === true;
+      setTakeover(channel.id, on);
+      log.info(`${on ? 'took over' : 'handed back'} ${channel.id} from the web ui`);
+      return send(res, 200, { takeover: on });
+    }
+  }
+
   if (method === 'GET' && url.pathname === '/api/tokenmaxxing') return send(res, 200, tokenmaxxingStatus());
   if (method === 'POST' && url.pathname === '/api/tokenmaxxing/sync') {
     return send(res, 200, await syncTokenmaxxing(true));
@@ -166,7 +251,7 @@ function parseBehavior(body: Record<string, unknown>): Behavior | undefined {
   return { modifiers, instructions: str(body.instructions, 8000) };
 }
 
-/** Stats page and behaviour editor on WEB_PORT, for devices on the local network only. */
+/** Stats page, behaviour editor and live chat on WEB_PORT, for devices on the local network only. */
 export function startWeb(client: Client) {
   if (!env.WEB_PORT) return;
   const server = createServer((req, res) => {
@@ -181,5 +266,5 @@ export function startWeb(client: Client) {
     });
   });
   server.on('error', (error) => log.error(`web ui couldn't start on port ${env.WEB_PORT}`, error));
-  server.listen(env.WEB_PORT, () => log.info(`stats + behaviour editor on http://<this machine's lan ip>:${env.WEB_PORT}`));
+  server.listen(env.WEB_PORT, () => log.info(`stats, behaviour editor and live chat on http://<this machine's lan ip>:${env.WEB_PORT}`));
 }

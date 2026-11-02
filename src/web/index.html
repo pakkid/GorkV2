@@ -135,6 +135,44 @@
     padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none;
   }
   #toast.show { opacity: 1; }
+
+  /* live */
+  #liveView .bar label { display: flex; gap: 8px; align-items: center; color: var(--text-2); white-space: nowrap; }
+  .banner { background: var(--chip); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; font-size: 14px; }
+  #feed {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    height: calc(100vh - 290px); min-height: 320px; overflow-y: auto; padding: 8px 0;
+  }
+  #liveView:has(#takeoverNote:not([hidden])) #feed { height: calc(100vh - 336px); }
+  .msg { display: flex; gap: 10px; padding: 4px 14px; position: relative; }
+  .msg:hover { background: var(--grid); }
+  .msg.self { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .msg.self:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .msg.cont .av { visibility: hidden; height: 0; }
+  .msg.cont .who { display: none; }
+  .msg.deleted .text { color: var(--muted); text-decoration: line-through; }
+  .av { width: 32px; height: 32px; border-radius: 50%; flex: none; background: var(--line); margin-top: 2px; }
+  .msg .body { min-width: 0; flex: 1; }
+  .who { font-weight: 600; font-size: 14px; }
+  .who small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .who .tag { font-size: 10px; background: var(--accent); color: #fff; border-radius: 4px; padding: 0 4px; margin-left: 4px; vertical-align: 1px; }
+  .text { white-space: pre-wrap; word-break: break-word; }
+  .ref { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .ref::before { content: '↪ '; }
+  .extra { color: var(--muted); font-size: 13px; }
+  .msg img.att { display: block; max-width: min(320px, 100%); max-height: 240px; border-radius: 8px; margin-top: 4px; }
+  .msg a { color: var(--accent); }
+  .reacts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+  .reacts span { background: var(--grid); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; font-size: 13px; }
+  .msg .act { position: absolute; right: 10px; top: 2px; padding: 2px 8px; font-size: 12px; display: none; }
+  .msg:hover .act, .msg .act:focus-visible { display: block; }
+  .msg.flash { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  .composer { margin-top: 10px; }
+  .replying { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); padding: 0 2px 6px; }
+  .replying span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .replying button { padding: 0 8px; font-size: 12px; }
+  .composer .row { display: flex; gap: 8px; align-items: flex-end; }
+  .composer textarea { min-height: 42px; max-height: 200px; }
 </style>
 </head>
 <body>
@@ -144,6 +182,7 @@
     <nav class="tabs">
       <a href="#stats" id="tabStats">Stats</a>
       <a href="#behaviour" id="tabBehaviour">Behaviour</a>
+      <a href="#live" id="tabLive">Live</a>
     </nav>
   </header>
 
@@ -217,6 +256,24 @@
       <pre id="prompt"></pre>
     </details>
   </section>
+
+  <section id="liveView" hidden>
+    <p class="sub">Read along in the channels gork is allowed to talk in and send messages as him. Take over a channel to make him stop answering there until you hand it back.</p>
+    <div class="bar">
+      <select id="liveChannel" aria-label="Channel"></select>
+      <label><span class="switch"><input type="checkbox" id="takeover"><span></span></span>Take over</label>
+    </div>
+    <div class="banner" id="takeoverNote" hidden>You're gork in this channel. He's reading along but won't say anything until you hand it back (or he restarts).</div>
+    <div id="feed" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <div class="replying" id="replying" hidden><span id="replyingText"></span><button type="button" id="cancelReply">Cancel</button></div>
+      <div class="row">
+        <textarea id="draft" rows="1" maxlength="8000" placeholder="Message as gork"></textarea>
+        <button class="primary" id="sendBtn" type="submit">Send</button>
+      </div>
+      <p class="hint" style="margin:6px 0 0">Enter sends, Shift+Enter for a new line. @name pings people, :name: uses server emojis.</p>
+    </form>
+  </section>
 </main>
 <div id="tip" hidden></div>
 <div id="toast" role="status"></div>
@@ -261,12 +318,15 @@ function el(tag, attrs = {}, ...kids) {
 
 // ---------------------------------------------------------------- tabs
 function showTab() {
-  const behaviour = location.hash === '#behaviour';
-  $('statsView').hidden = behaviour;
-  $('behaviourView').hidden = !behaviour;
-  $('tabStats').toggleAttribute('aria-current', !behaviour);
-  $('tabBehaviour').toggleAttribute('aria-current', behaviour);
-  if (behaviour) loadBehaviour().catch((e) => toast(e.message));
+  const tab = ['#behaviour', '#live'].includes(location.hash) ? location.hash.slice(1) : 'stats';
+  $('statsView').hidden = tab !== 'stats';
+  $('behaviourView').hidden = tab !== 'behaviour';
+  $('liveView').hidden = tab !== 'live';
+  $('tabStats').toggleAttribute('aria-current', tab === 'stats');
+  $('tabBehaviour').toggleAttribute('aria-current', tab === 'behaviour');
+  $('tabLive').toggleAttribute('aria-current', tab === 'live');
+  if (tab === 'behaviour') loadBehaviour().catch((e) => toast(e.message));
+  else if (tab === 'live') loadLive();
   else loadStats();
 }
 addEventListener('hashchange', showTab);
@@ -564,6 +624,192 @@ $('addMod').addEventListener('click', () => {
 });
 $('instructions').addEventListener('input', () => { behaviour.instructions = $('instructions').value; save(); });
 $('preview').addEventListener('toggle', () => { if ($('preview').open) loadPrompt(); });
+
+// ---------------------------------------------------------------- live
+const rows = new Map(); // message id -> { sig, node }, so polling only redraws what changed
+const clock = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+const shortDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+const safeUrl = (u) => (typeof u === 'string' && u.startsWith('https://') ? u : null);
+let liveId = null;
+let replyTo = null;
+let stick = true;
+let fetching = null;
+let lastTyping = 0;
+
+async function loadLive() {
+  let data;
+  try { data = await api('/api/live/channels'); } catch (e) { toast(e.message); return; }
+  const sel = $('liveChannel');
+  const want = sel.value || store.get('liveChannel');
+  const groups = new Map();
+  for (const c of data.channels) {
+    const g = c.server ?? 'Direct messages';
+    if (!groups.has(g)) groups.set(g, el('optgroup', { label: g }));
+    groups.get(g).append(new Option(c.name + (c.takeover ? ' (taken over)' : ''), c.id));
+  }
+  sel.replaceChildren(...groups.values());
+  if (!data.channels.length) {
+    liveId = null;
+    $('feed').replaceChildren(el('div', { class: 'empty', text: "gork isn't allowed to talk anywhere yet. Turn a channel on with /mode in Discord." }));
+    return;
+  }
+  sel.value = data.channels.some((c) => c.id === want) ? want : data.channels[0].id;
+  loadMessages();
+}
+
+async function loadMessages() {
+  const id = $('liveChannel').value;
+  if (!id || fetching === id) return;
+  if (id !== liveId) {
+    liveId = id;
+    rows.clear();
+    stick = true;
+    setReply(null);
+    $('feed').replaceChildren(el('div', { class: 'empty', text: 'Loading…' }));
+  }
+  fetching = id;
+  try {
+    const data = await api(`/api/live/messages?channel=${id}`);
+    // switched channels while this was in flight
+    if (id !== liveId) return;
+    $('takeover').checked = data.takeover;
+    $('takeoverNote').hidden = !data.takeover;
+    renderFeed(data.messages);
+  } catch (e) { toast(e.message); }
+  finally { if (fetching === id) fetching = null; }
+}
+
+function renderFeed(msgs) {
+  const feed = $('feed');
+  const byId = new Map(msgs.map((m) => [m.id, m]));
+  const seen = new Set();
+  let prev = null;
+  const nodes = msgs.map((m) => {
+    // same person within a few minutes: no name or avatar again, like discord
+    const cont = !!prev && prev.name === m.name && prev.self === m.self && !m.replyToId && m.createdAt - prev.createdAt < 5 * 60_000;
+    const ref = m.replyToId ? byId.get(m.replyToId) : null;
+    const refText = ref ? `${ref.name}: ${ref.content || '[attachment]'}` : m.replySnippet;
+    const sig = JSON.stringify([m, cont, refText]);
+    prev = m;
+    seen.add(m.id);
+    let row = rows.get(m.id);
+    if (!row || row.sig !== sig) {
+      row = { sig, node: msgNode(m, cont, refText) };
+      rows.set(m.id, row);
+    }
+    return row.node;
+  });
+  for (const id of rows.keys()) if (!seen.has(id)) rows.delete(id);
+
+  if (!msgs.length) { feed.replaceChildren(el('div', { class: 'empty', text: 'Nothing here yet.' })); return; }
+  const same = nodes.length === feed.children.length && nodes.every((n, i) => feed.children[i] === n);
+  if (!same) {
+    const top = feed.scrollTop;
+    feed.replaceChildren(...nodes);
+    feed.scrollTop = top;
+  }
+  if (stick) feed.scrollTop = feed.scrollHeight;
+}
+
+function msgNode(m, cont, refText) {
+  const when = new Date(m.createdAt);
+  const time = (Date.now() - m.createdAt > 86_400_000 ? `${shortDay.format(when)} ` : '') + clock.format(when);
+  const body = el('div', { class: 'body' });
+  if (refText) body.append(el('div', { class: 'ref', text: refText, title: refText, onclick: () => jump(m.replyToId) }));
+  if (!cont) {
+    body.append(el('div', { class: 'who' },
+      m.self ? 'gork' : m.name,
+      m.bot && !m.self ? el('span', { class: 'tag', text: 'BOT' }) : '',
+      el('small', { text: time, title: when.toLocaleString() })));
+  }
+  if (m.content || m.edited) {
+    body.append(el('div', { class: 'text', title: when.toLocaleString() }, m.content, m.edited ? el('small', { class: 'extra', text: ' (edited)' }) : ''));
+  }
+  for (const a of m.attachments) {
+    const url = safeUrl(a.url);
+    if (!url) continue;
+    const img = a.type.startsWith('image/') && el('img', { class: 'att', src: url, alt: a.name, loading: 'lazy', onload: () => { if (stick) $('feed').scrollTop = $('feed').scrollHeight; } });
+    body.append(el('div', {}, el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, img || a.name)));
+  }
+  for (const x of m.extras) body.append(el('div', { class: 'extra', text: x }));
+  if (m.reactions.length) body.append(el('div', { class: 'reacts' }, ...m.reactions.map(([e, n]) => el('span', { text: n > 1 ? `${e} ${n}` : e }))));
+  if (m.deleted) body.append(el('div', { class: 'extra', text: 'deleted' }));
+
+  const avatar = safeUrl(m.avatar);
+  return el('div', { class: `msg${m.self ? ' self' : ''}${cont ? ' cont' : ''}${m.deleted ? ' deleted' : ''}` },
+    avatar ? el('img', { class: 'av', src: avatar, alt: '' }) : el('div', { class: 'av' }),
+    body,
+    m.deleted ? '' : el('button', { class: 'act', type: 'button', text: 'Reply', onclick: () => setReply(m) }));
+}
+
+function jump(id) {
+  const node = rows.get(id)?.node;
+  if (!node) return;
+  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  node.classList.add('flash');
+  setTimeout(() => node.classList.remove('flash'), 1200);
+}
+
+function setReply(m) {
+  replyTo = m?.id ?? null;
+  $('replying').hidden = !m;
+  $('replyingText').textContent = m ? `Replying to ${m.self ? 'gork' : m.name}: ${m.content || '[attachment]'}` : '';
+  if (m) $('draft').focus();
+}
+
+function fitDraft() {
+  const d = $('draft');
+  d.style.height = 'auto';
+  d.style.height = `${d.scrollHeight + 2}px`;
+}
+
+$('feed').addEventListener('scroll', () => {
+  const f = $('feed');
+  stick = f.scrollHeight - f.scrollTop - f.clientHeight < 40;
+});
+$('liveChannel').addEventListener('change', () => { store.set('liveChannel', $('liveChannel').value); loadMessages(); });
+$('cancelReply').addEventListener('click', () => setReply(null));
+$('takeover').addEventListener('change', async () => {
+  const on = $('takeover').checked;
+  try {
+    await api(`/api/live/takeover?channel=${liveId}`, { method: 'PUT', body: { on } });
+    $('takeoverNote').hidden = !on;
+    toast(on ? "You're driving. gork is muted here" : 'Handed back to gork');
+    loadLive();
+  } catch (e) { $('takeover').checked = !on; toast(e.message); }
+});
+$('draft').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
+  if (e.key === 'Escape') setReply(null);
+});
+$('draft').addEventListener('input', () => {
+  fitDraft();
+  // "gork is typing…" while you type, at discord's own refresh rate
+  if (liveId && $('draft').value.trim() && Date.now() - lastTyping > 8000) {
+    lastTyping = Date.now();
+    api(`/api/live/typing?channel=${liveId}`, { method: 'POST' }).catch(() => {});
+  }
+});
+$('composer').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const content = $('draft').value;
+  if (!content.trim() || !liveId) return;
+  $('sendBtn').disabled = true;
+  try {
+    await api(`/api/live/send?channel=${liveId}`, { method: 'POST', body: { content, replyTo } });
+    $('draft').value = '';
+    fitDraft();
+    setReply(null);
+    lastTyping = 0;
+    stick = true;
+    // discord echoes it back over the gateway a moment later
+    setTimeout(loadMessages, 500);
+  } catch (err) { toast(err.message); }
+  $('sendBtn').disabled = false;
+  $('draft').focus();
+});
+setInterval(() => { if (!$('liveView').hidden && !document.hidden) loadMessages(); }, 2500);
+setInterval(() => { if (!$('liveView').hidden && !document.hidden) loadLive(); }, 60_000);
 
 showTab();
 </script>
