@@ -39,7 +39,7 @@ gork can put his token usage on [tokenmaxxing.sh](https://tokenmaxxing.sh). It o
 TOKENMAXXING_CONFIG_DIR=/app/data/tokenmaxxing npx -y @851-labs/tokenmaxxing@latest login
 ```
 
-The token lands in the data volume and gork picks it up within 10 minutes, no restart. Outside docker, use `$DATA_DIR/tokenmaxxing` (`data/tokenmaxxing` by default) or set `TOKENMAXXING_API_TOKEN` instead.
+The token lands in the data volume and gork picks it up within 5 minutes, no restart. Outside docker, use `$DATA_DIR/tokenmaxxing` (`data/tokenmaxxing` by default) or set `TOKENMAXXING_API_TOKEN` instead.
 
 ## Deploy with Portainer
 

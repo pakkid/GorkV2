@@ -8,8 +8,8 @@ import { logger } from './log';
 
 const log = logger('tokenmaxxing');
 
-// the CLI syncs every 5 minutes; gork's numbers don't move that fast
-const everyMs = 10 * 60 * 1000;
+// same as the CLI's background service
+const everyMs = 5 * 60 * 1000;
 
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: timezone });
 
