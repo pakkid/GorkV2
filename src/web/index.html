@@ -167,7 +167,19 @@
   .msg .act { position: absolute; right: 10px; top: 2px; padding: 2px 8px; font-size: 12px; display: none; }
   .msg:hover .act, .msg .act:focus-visible { display: block; }
   .msg.flash { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-  .composer { margin-top: 10px; }
+  .composer { margin-top: 10px; position: relative; }
+  #suggest {
+    position: absolute; left: 0; right: 0; bottom: calc(100% - 4px); z-index: 5; max-height: 300px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px;
+    box-shadow: 0 -4px 16px rgb(0 0 0 / .15);
+  }
+  #suggest .head { color: var(--muted); font-size: 12px; padding: 4px 8px; text-transform: uppercase; letter-spacing: .03em; }
+  #suggest [role=option] { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+  #suggest [aria-selected=true] { background: var(--chip); }
+  #suggest img, #suggest .glyph { width: 22px; height: 22px; flex: none; border-radius: 50%; object-fit: contain; }
+  #suggest img.emoji { border-radius: 0; }
+  #suggest .glyph { font-size: 18px; line-height: 22px; text-align: center; }
+  #suggest small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .replying { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); padding: 0 2px 6px; }
   .replying span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .replying button { padding: 0 8px; font-size: 12px; }
@@ -266,9 +278,10 @@
     <div class="banner" id="takeoverNote" hidden>You're gork in this channel. He's reading along but won't say anything until you hand it back (or he restarts).</div>
     <div id="feed" aria-live="polite"></div>
     <form class="composer" id="composer">
+      <div id="suggest" role="listbox" aria-label="Suggestions" hidden></div>
       <div class="replying" id="replying" hidden><span id="replyingText"></span><button type="button" id="cancelReply">Cancel</button></div>
       <div class="row">
-        <textarea id="draft" rows="1" maxlength="8000" placeholder="Message as gork"></textarea>
+        <textarea id="draft" rows="1" maxlength="8000" placeholder="Message as gork" role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false"></textarea>
         <button class="primary" id="sendBtn" type="submit">Send</button>
       </div>
       <p class="hint" style="margin:6px 0 0">Enter sends, Shift+Enter for a new line. @name pings people, :name: uses server emojis.</p>
@@ -665,6 +678,8 @@ async function loadMessages() {
     rows.clear();
     stick = true;
     setReply(null);
+    closeSuggest();
+    loadMentions(id);
     $('feed').replaceChildren(el('div', { class: 'empty', text: 'Loading…' }));
   }
   fetching = id;
@@ -779,11 +794,26 @@ $('takeover').addEventListener('change', async () => {
   } catch (e) { $('takeover').checked = !on; toast(e.message); }
 });
 $('draft').addEventListener('keydown', (e) => {
+  if (suggestion && !e.isComposing) {
+    const n = suggestion.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      suggestion.index = (suggestion.index + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      renderSuggest();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(suggestion.index); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closeSuggest(); return; }
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
   if (e.key === 'Escape') setReply(null);
 });
+$('draft').addEventListener('click', updateSuggest);
+$('draft').addEventListener('blur', closeSuggest);
+$('draft').addEventListener('focus', () => { if (liveId && Date.now() - mentionsAt > 30_000) loadMentions(liveId); });
 $('draft').addEventListener('input', () => {
   fitDraft();
+  updateSuggest();
   // "gork is typing…" while you type, at discord's own refresh rate
   if (liveId && $('draft').value.trim() && Date.now() - lastTyping > 8000) {
     lastTyping = Date.now();
@@ -792,7 +822,7 @@ $('draft').addEventListener('input', () => {
 });
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const content = $('draft').value;
+  const content = withPings($('draft').value);
   if (!content.trim() || !liveId) return;
   $('sendBtn').disabled = true;
   try {
@@ -808,6 +838,133 @@ $('composer').addEventListener('submit', async (e) => {
   $('sendBtn').disabled = false;
   $('draft').focus();
 });
+// ---------------------------------------------------------------- live: @ and : autocomplete
+let people = [];
+let serverEmojis = [];
+let unicodeEmojis = null;
+let mentionsAt = 0;
+// "@name" picked from the list -> user id, made into a real ping on send even if two people share a name
+const picked = new Map();
+let suggestion = null; // { kind, start, end, items, index }
+
+async function loadMentions(id) {
+  mentionsAt = Date.now();
+  if (!unicodeEmojis) {
+    unicodeEmojis = [];
+    fetch('/emojis.json').then((r) => r.json())
+      .then((rows) => { unicodeEmojis = rows.map(([char, names]) => ({ char, names: names.split(' ') })); })
+      .catch(() => { unicodeEmojis = null; });
+  }
+  try {
+    const data = await api(`/api/live/mentions?channel=${id}`);
+    if (id !== liveId) return;
+    people = data.people;
+    serverEmojis = data.emojis;
+  } catch {
+    if (id === liveId) { people = []; serverEmojis = []; }
+  }
+}
+
+// 0: a name starts with it, 1: a word in a name does, 2: somewhere inside, -1: no match
+function rank(names, q) {
+  let best = -1;
+  for (const raw of names) {
+    if (!raw) continue;
+    const n = raw.toLowerCase();
+    const r = n.startsWith(q) ? 0 : n.includes(`_${q}`) || n.includes(` ${q}`) ? 1 : n.includes(q) ? 2 : -1;
+    if (r >= 0 && (best < 0 || r < best)) best = r;
+  }
+  return best;
+}
+
+function best(list, namesOf, q, n) {
+  if (n <= 0) return [];
+  if (!q) return list.slice(0, n);
+  const hits = [];
+  for (const x of list) {
+    const r = rank(namesOf(x), q);
+    if (r >= 0) hits.push([r, x]);
+  }
+  // stable sort, so ties keep the list's own order (recent talkers, emoji order)
+  return hits.sort((a, b) => a[0] - b[0]).slice(0, n).map((h) => h[1]);
+}
+
+function updateSuggest() {
+  const d = $('draft');
+  if (d.selectionStart !== d.selectionEnd) return closeSuggest();
+  const before = d.value.slice(0, d.selectionStart);
+  const m = /(?:^|\s)([@:])([^\s@:]{0,32})$/.exec(before);
+  if (!m) return closeSuggest();
+  const [, kind, raw] = m;
+  const q = raw.toLowerCase();
+  let items;
+  if (kind === '@') {
+    items = best(people, (p) => [p.name, p.username, p.globalName], q, 8).map((p) => ({
+      label: p.name, sub: `@${p.username}${p.bot ? ' · bot' : ''}`, img: p.avatar, insert: `@${p.name} `, mention: [`@${p.name}`, p.id],
+    }));
+  } else {
+    // like discord: a lone ":" or ":x" is probably just punctuation
+    if (q.length < 2) return closeSuggest();
+    const custom = best(serverEmojis, (e) => [e.name], q, 8).map((e) => ({
+      label: `:${e.name}:`, sub: 'this server', img: e.url, emoji: true, insert: `:${e.name}: `,
+    }));
+    const uni = best(unicodeEmojis ?? [], (e) => e.names, q, 8 - custom.length).map((e) => ({
+      label: `:${e.names.find((n) => n.startsWith(q)) ?? e.names.find((n) => n.includes(q)) ?? e.names[0]}:`, glyph: e.char, insert: `${e.char} `,
+    }));
+    items = [...custom, ...uni];
+  }
+  if (!items.length) return closeSuggest();
+  suggestion = { kind, start: before.length - raw.length - 1, end: d.selectionStart, items, index: 0 };
+  renderSuggest();
+}
+
+function renderSuggest() {
+  const s = suggestion;
+  const box = $('suggest');
+  box.replaceChildren(el('div', { class: 'head', text: s.kind === '@' ? 'People' : 'Emoji' }), ...s.items.map((it, i) => {
+    const src = safeUrl(it.img);
+    const opt = el('div', { role: 'option', id: `sug${i}`, 'aria-selected': String(i === s.index) },
+      src ? el('img', { src, alt: '', class: it.emoji ? 'emoji' : '' }) : el('span', { class: 'glyph', text: it.glyph ?? '' }),
+      el('span', { text: it.label }),
+      it.sub ? el('small', { text: it.sub }) : '');
+    // mousedown, not click: the textarea keeps focus and the caret
+    opt.addEventListener('mousedown', (e) => { e.preventDefault(); pick(i); });
+    return opt;
+  }));
+  box.hidden = false;
+  $('draft').setAttribute('aria-expanded', 'true');
+  $('draft').setAttribute('aria-activedescendant', `sug${s.index}`);
+  $(`sug${s.index}`).scrollIntoView({ block: 'nearest' });
+}
+
+function pick(i) {
+  const s = suggestion;
+  const it = s.items[i];
+  const d = $('draft');
+  d.value = d.value.slice(0, s.start) + it.insert + d.value.slice(s.end);
+  const caret = s.start + it.insert.length;
+  d.setSelectionRange(caret, caret);
+  if (it.mention) picked.set(...it.mention);
+  closeSuggest();
+  fitDraft();
+}
+
+function closeSuggest() {
+  suggestion = null;
+  $('suggest').hidden = true;
+  $('draft').setAttribute('aria-expanded', 'false');
+  $('draft').removeAttribute('aria-activedescendant');
+}
+
+/** "@name" you picked from the list becomes <@id>. Longest first, so "@niko bellic" beats "@niko". */
+function withPings(text) {
+  for (const [name, id] of [...picked].sort((a, b) => b[0].length - a[0].length)) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'gu'), `<@${id}>`);
+  }
+  return text;
+}
+
 setInterval(() => { if (!$('liveView').hidden && !document.hidden) loadMessages(); }, 2500);
 setInterval(() => { if (!$('liveView').hidden && !document.hidden) loadLive(); }, 60_000);
 

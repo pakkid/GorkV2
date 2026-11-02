@@ -14,6 +14,9 @@ import { canSearchWeb } from '../web-search';
 
 const log = logger('web');
 const page = readFileSync(new URL('./index.html', import.meta.url));
+// unicode emojis with their discord-style shortcodes, for the live tab's autocomplete.
+// made from emojibase-data (github + iamcal + joypixels shortcodes)
+const emojis = readFileSync(new URL('./emojis.json', import.meta.url));
 
 /** Private, loopback and link-local addresses. Anything else is the internet. */
 export function isLan(address: string | undefined) {
@@ -137,6 +140,44 @@ function liveMessage(client: Client, m: ChatMsg) {
   };
 }
 
+/** Server members (people talking in the channel first) and the server's emojis. */
+function mentionables(client: Client, channel: SendableChannels) {
+  const guild = 'guild' in channel ? channel.guild : null;
+  const chLog = channelLog(channel.id);
+  const people = new Map<string, { id: string; name: string; username: string; globalName: string | null; avatar: string; bot: boolean }>();
+  // newest talkers first, so they top the list for an empty @
+  for (const m of [...chLog.messages].reverse()) {
+    if (m.self || people.has(m.authorId)) continue;
+    const member = guild?.members.cache.get(m.authorId);
+    const user = member?.user ?? client.users.cache.get(m.authorId);
+    people.set(m.authorId, {
+      id: m.authorId,
+      name: member?.displayName ?? m.name,
+      username: m.username,
+      globalName: user?.globalName ?? m.globalName ?? null,
+      avatar: (member ?? user)?.displayAvatarURL({ size: 32, extension: 'png' }) ?? '',
+      bot: m.bot,
+    });
+  }
+  const rest = [...(guild?.members.cache.values() ?? [])]
+    .filter((m) => m.id !== client.user!.id && !people.has(m.id))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  for (const m of rest) {
+    people.set(m.id, {
+      id: m.id,
+      name: m.displayName,
+      username: m.user.username,
+      globalName: m.user.globalName,
+      avatar: m.displayAvatarURL({ size: 32, extension: 'png' }),
+      bot: m.user.bot,
+    });
+  }
+  const serverEmojis = [...(guild?.emojis.cache.values() ?? [])]
+    .filter((e) => e.available !== false && e.name)
+    .map((e) => ({ name: e.name!, url: e.imageURL({ size: 32 }) }));
+  return { people: [...people.values()], emojis: serverEmojis };
+}
+
 async function handle(client: Client, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
@@ -150,6 +191,10 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
       'referrer-policy': 'no-referrer',
     });
     return res.end(page);
+  }
+  if (method === 'GET' && url.pathname === '/emojis.json') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'max-age=86400' });
+    return res.end(emojis);
   }
   if (!url.pathname.startsWith('/api/')) return send(res, 404, { error: 'not found' });
 
@@ -208,6 +253,10 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
         takeover: isTakenOver(channel.id),
         messages: chLog.messages.map((m) => liveMessage(client, m)),
       });
+    }
+    // who you can @ and which server emojis you can :use:, for the composer's autocomplete
+    if (method === 'GET' && url.pathname === '/api/live/mentions') {
+      return send(res, 200, mentionables(client, channel));
     }
     if (method === 'POST' && url.pathname === '/api/live/send') {
       const body = await readJson(req);
