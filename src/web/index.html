@@ -53,6 +53,10 @@
 
   /* stats */
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .tmx { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+  .tmx { min-width: 0; }
+  .tmx span { color: var(--muted); font-size: 13px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tmx span.bad { color: var(--danger); }
   .tile, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
   .tile .label { color: var(--text-2); font-size: 13px; }
   .tile .value { font-size: 26px; font-weight: 650; letter-spacing: -.01em; line-height: 1.25; margin: 2px 0; font-variant-numeric: tabular-nums; }
@@ -152,6 +156,10 @@
         <button data-days="30">30d</button>
         <button data-days="90">90d</button>
         <button data-days="365">1y</button>
+      </div>
+      <div class="tmx">
+        <span id="tmxStatus"></span>
+        <button id="tmxSync" type="button">Sync to tokenmaxxing</button>
       </div>
     </div>
 
@@ -428,6 +436,47 @@ addEventListener('resize', () => {
   resizeTimer = setTimeout(() => { if (statsData && !$('statsView').hidden) renderStats(); }, 150);
 });
 setInterval(() => { if (!$('statsView').hidden && !document.hidden) loadStats(); }, 60_000);
+
+// ---------------------------------------------------------------- tokenmaxxing
+const ago = (t) => {
+  const s = Math.round((Date.now() - t) / 1000);
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
+};
+
+function renderTmx(s) {
+  const status = $('tmxStatus');
+  const off = s.state === 'off';
+  status.textContent = {
+    off: 'tokenmaxxing: not logged in',
+    waiting: 'tokenmaxxing: not synced yet',
+    ok: `synced ${s.lastSync ? ago(s.lastSync) : ''}`,
+    error: `sync failed: ${s.error}`,
+    rejected: 'tokenmaxxing token rejected, log in again',
+  }[s.state] ?? '';
+  status.title = s.error ?? '';
+  status.classList.toggle('bad', s.state === 'error' || s.state === 'rejected');
+  $('tmxSync').disabled = off;
+  $('tmxSync').title = off ? 'Log in from the container shell first (see the README)' : `Shows up as ${s.source}`;
+}
+
+async function loadTmx() {
+  try { renderTmx(await api('/api/tokenmaxxing')); } catch {}
+}
+
+$('tmxSync').addEventListener('click', async () => {
+  const b = $('tmxSync');
+  b.disabled = true;
+  b.textContent = 'Syncing…';
+  try {
+    const s = await api('/api/tokenmaxxing/sync', { method: 'POST' });
+    renderTmx(s);
+    toast(s.state === 'ok' ? 'Synced to tokenmaxxing' : 'Sync failed');
+  } catch (e) { toast(e.message); }
+  b.textContent = 'Sync to tokenmaxxing';
+  b.disabled = false;
+});
+loadTmx();
+setInterval(() => { if (!$('statsView').hidden && !document.hidden) loadTmx(); }, 60_000);
 
 // ---------------------------------------------------------------- behaviour
 let behaviour = { modifiers: [], instructions: '' };

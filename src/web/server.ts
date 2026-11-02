@@ -7,6 +7,7 @@ import { logger } from '../log';
 import { systemPrompt } from '../ai/prompt';
 import { type Behavior, type Modifier, ownerRules, settings } from '../settings';
 import { summary } from '../stats';
+import { syncTokenmaxxing, tokenmaxxingStatus } from '../tokenmaxxing';
 import { canSearchWeb } from '../web-search';
 
 const log = logger('web');
@@ -142,6 +143,11 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
     const guild = client.guilds.cache.get(scope);
     const safe = guild ? settings.safety(guild.id, '') === 'safe' : false;
     return send(res, 200, { prompt: systemPrompt(safe, ownerRules(guild?.id ?? null), canSearchWeb) });
+  }
+
+  if (method === 'GET' && url.pathname === '/api/tokenmaxxing') return send(res, 200, tokenmaxxingStatus());
+  if (method === 'POST' && url.pathname === '/api/tokenmaxxing/sync') {
+    return send(res, 200, await syncTokenmaxxing(true));
   }
 
   return send(res, 404, { error: 'not found' });

@@ -94,16 +94,23 @@ function currentToken() {
 // a revoked or mistyped token won't fix itself, but a fresh login will
 let rejected: string | undefined;
 let announced = false;
+// for the web ui
+let lastSync: number | undefined;
+let lastError: string | undefined;
+let running: Promise<void> | undefined;
 
-async function sync() {
+async function sync(force: boolean) {
   const token = currentToken();
-  if (!token || token === rejected) return;
+  if (!token || (token === rejected && !force)) return;
   if (!announced) {
     announced = true;
     log.info(`syncing usage to tokenmaxxing.sh as ${env.TOKENMAXXING_SOURCE}`);
   }
   const daily = dailyReport();
-  if (!daily.length) return;
+  if (!daily.length) {
+    lastSync = Date.now();
+    return;
+  }
   const res = await fetch(`${env.TOKENMAXXING_API_URL.replace(/\/$/, '')}/usage/ingest`, {
     method: 'POST',
     headers: {
@@ -126,11 +133,39 @@ async function sync() {
   if (res.status === 401) {
     rejected = token;
     announced = false;
+    lastError = 'token rejected';
     log.warn('token rejected, not syncing until there is a new one. make one with `tokenmaxxing login`');
     return;
   }
   if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 300)}`);
+  rejected = undefined;
+  lastSync = Date.now();
+  lastError = undefined;
   log.debug(`synced ${daily.length} days`);
+}
+
+/** Runs a sync now, or joins the one already going. `force` retries a rejected token too. */
+export async function syncTokenmaxxing(force = false) {
+  running ??= sync(force)
+    .catch((error) => {
+      lastError = error instanceof Error ? error.message : String(error);
+      log.warn('sync failed', error);
+    })
+    .finally(() => {
+      running = undefined;
+    });
+  await running;
+  return tokenmaxxingStatus();
+}
+
+export function tokenmaxxingStatus() {
+  const token = currentToken();
+  return {
+    state: !token ? 'off' : token === rejected ? 'rejected' : lastError ? 'error' : lastSync ? 'ok' : 'waiting',
+    source: env.TOKENMAXXING_SOURCE,
+    lastSync: lastSync ?? null,
+    error: lastError ?? null,
+  };
 }
 
 /**
@@ -138,7 +173,7 @@ async function sync() {
  * The token is looked up on every run, so logging in from the container's shell needs no restart.
  */
 export function startTokenmaxxing() {
-  const run = () => void sync().catch((error) => log.warn('sync failed', error));
+  const run = () => void syncTokenmaxxing();
   run();
   setInterval(run, everyMs).unref();
 }
