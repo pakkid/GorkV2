@@ -40,7 +40,7 @@ npm install --prefix /tmp/tm @851-labs/tokenmaxxing@latest
 env -u TOKENMAXXING_API_TOKEN TOKENMAXXING_CONFIG_DIR=/app/data/tokenmaxxing /tmp/tm/node_modules/@851-labs/tokenmaxxing/bin/tokenmaxxing login
 ```
 
-(`npx` doesn't work here: npm 10 never links its command. And the compose file sets `TOKENMAXXING_API_TOKEN` to an empty string, which the CLI takes over its own login, hence the `env -u`.)
+(`npx` doesn't work here: npm 10 never links its command. And the CLI takes even an empty `TOKENMAXXING_API_TOKEN` over its own login, hence the `env -u`.)
 
 The token lands in the data volume and gork picks it up within 5 minutes, no restart. Outside docker, use `$DATA_DIR/tokenmaxxing` (`data/tokenmaxxing` by default) or set `TOKENMAXXING_API_TOKEN` instead.
 

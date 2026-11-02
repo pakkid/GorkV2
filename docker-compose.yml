@@ -19,7 +19,9 @@ services:
       AI_REASONING: ${AI_REASONING:-}
       AI_PRICES: ${AI_PRICES:-}
       EXA_API_KEY: ${EXA_API_KEY:-}
-      TOKENMAXXING_API_TOKEN: ${TOKENMAXXING_API_TOKEN:-}
+      # no value on purpose: left out of the container entirely when unset, because the
+      # tokenmaxxing CLI takes an empty one over its own login
+      TOKENMAXXING_API_TOKEN:
       TOKENMAXXING_SOURCE: ${TOKENMAXXING_SOURCE:-claude}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # gork's clock and hometown. match these to where your server's people are
