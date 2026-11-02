@@ -33,11 +33,19 @@ Set `EXA_API_KEY` ([Exa](https://dashboard.exa.ai/api-keys), what the original g
 
 Any OpenRouter-compatible endpoint works (`AI_BASE_URL`), including the Hack Club proxy. Pick a fast model with structured-output support; `AI_REASONING=minimal` keeps latency down.
 
+gork can put his token usage on [tokenmaxxing.sh](https://tokenmaxxing.sh). It only lists coding agents, so he shows up as whichever one `TOKENMAXXING_SOURCE` names (default `claude`). Sign in to the site as gork's account, then in the container's shell run:
+
+```bash
+TOKENMAXXING_CONFIG_DIR=/app/data/tokenmaxxing npx -y @851-labs/tokenmaxxing@latest login
+```
+
+The token lands in the data volume and gork picks it up within 10 minutes, no restart. Outside docker, use `$DATA_DIR/tokenmaxxing` (`data/tokenmaxxing` by default) or set `TOKENMAXXING_API_TOKEN` instead.
+
 ## Deploy with Portainer
 
 1. **Stacks → Add stack → Repository**
 2. Repository URL: this repo, reference `refs/heads/main`, compose path `docker-compose.yml`
-3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `EXA_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`, `GORK_LOCATION`). If the repo is private, turn on **Authentication** with a GitHub token.
+3. Under **Environment variables** add at least `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `AI_API_KEY` (optional: `DISCORD_OWNER_ID`, `EXA_API_KEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODELS`, `AI_REASONING`, `TZ`, `GORK_LOCATION`, `TOKENMAXXING_API_TOKEN`, `TOKENMAXXING_SOURCE`). If the repo is private, turn on **Authentication** with a GitHub token.
 4. Deploy. Slash commands register themselves on startup.
 
 Settings and stats live in the `gork-data` volume, so redeploys keep them. To update, hit **Pull and redeploy** on the stack (or enable GitOps auto-updates).

@@ -22,6 +22,7 @@ import {
 import { logger } from './log';
 import { loadMembers } from './members';
 import { modeOf } from './settings';
+import { startTokenmaxxing } from './tokenmaxxing';
 import { startWeb } from './web/server';
 
 const log = logger('core');
@@ -51,6 +52,7 @@ client.once(Events.ClientReady, (c) => {
   log.info(`logged in as ${c.user.tag} in ${c.guilds.cache.size} servers`);
   rotatePresence();
   startWeb(c);
+  startTokenmaxxing();
   // one at a time, discord rate limits member chunk requests
   void (async () => {
     for (const guild of c.guilds.cache.values()) await loadMembers(guild);

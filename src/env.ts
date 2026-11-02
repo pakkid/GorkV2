@@ -26,6 +26,18 @@ const schema = z.object({
   // web search, like the original gork: https://dashboard.exa.ai/api-keys. unset = no searching
   EXA_API_KEY: z.string().optional(),
 
+  // tokenmaxxing.sh leaderboard: a `tokenmaxxing login` token (tmx_...).
+  // unset = use the one saved in DATA_DIR/tokenmaxxing, if any
+  TOKENMAXXING_API_TOKEN: z.string().optional(),
+  TOKENMAXXING_API_URL: z.url().default('https://api.tokenmaxxing.sh'),
+  // it only takes coding agents, so gork has to pose as one of them
+  TOKENMAXXING_SOURCE: z
+    .enum([
+      'claude', 'codex', 'opencode', 'gemini', 'copilot', 'hermes', 'pi', 'omp', 'grok', 'antigravity',
+      'zcode', 'amp', 'qwen', 'kimi', 'kilo', 'goose', 'droid', 'codebuff', 'openclaw',
+    ])
+    .default('claude'),
+
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   DATA_DIR: z.string().default('data'),
   // stats + behaviour editor web ui, only answers devices on the local network. 0 turns it off
