@@ -232,6 +232,7 @@ async function run(state: ChannelState) {
             .filter((n): n is string => !!n),
           ruts: ruts.bits.map((b) => b.shown),
           openers: ruts.openers,
+          fresh: transcript.newIds,
           members,
           emojis,
           searches,
@@ -255,6 +256,14 @@ async function run(state: ChannelState) {
           continue;
         }
         action.text = ruts.dropName(action.text);
+        // the model likes replying to something from 10 minutes ago because it's in the
+        // transcript. old stuff was already dealt with: point the reply at what's new
+        if (action.type === 'reply' && !transcript.newIds.includes(action.to ?? '')) {
+          const to = freshTarget(chLog, transcript.newIds);
+          log.info(`${state.place}: reply aimed at old message ${action.to}, moved to ${to ?? 'plain send'}`);
+          action.to = to;
+          if (!to) action.type = 'send';
+        }
         const key = normalize(action.text);
         // short stuff like "no" or "lmao" is allowed to come up again
         if (key.length >= 10 && spoken.has(key)) {
@@ -356,6 +365,13 @@ const maxPings = 5;
 function allowedMentions(text: string) {
   const users = [...new Set([...text.matchAll(/<@!?(\d+)>/g)].map((m) => m[1]!))];
   return { users: users.slice(0, maxPings), repliedUser: true };
+}
+
+/** The newest new message that pinged gork, else just the newest new message. */
+function freshTarget(chLog: ChannelLog, ids: string[]) {
+  const msgs = ids.map((id) => chLog.byId.get(id)).filter((m): m is ChatMsg => !!m && !m.deleted);
+  const named = (m: ChatMsg) => keywords.some((k) => m.content.toLowerCase().includes(k));
+  return (msgs.findLast((m) => m.mentionsSelf || named(m)) ?? msgs.at(-1))?.id ?? null;
 }
 
 async function resolveTarget(channel: SendableChannels, id: string | null) {

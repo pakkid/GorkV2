@@ -97,15 +97,27 @@ export function findRuts(messages: ChatMsg[]): Ruts {
     }
   }
 
+  const isName = (w: string) => {
+    const l = w.toLowerCase();
+    return nameWords.has(l) || nameWords.has(l.replace(/[\d_]+$/, ''));
+  };
+
   const dropName = (text: string) => {
     let out = text.trimStart();
     // a few rounds: "sheep blancmange ur..." or "@Sheep26 mate ur..."
     for (let i = 0; i < 3; i++) {
       const m = out.match(/^@?([\p{L}\p{N}_.]+)[\s,.:!-]+/u);
       if (!m) break;
-      const w = m[1]!.toLowerCase();
-      if (!nameWords.has(w) && !nameWords.has(w.replace(/[\d_]+$/, ''))) break;
-      const rest = out.slice(m[0].length).replace(vocative, '');
+      if (!isName(m[1]!)) break;
+      const after = out.slice(m[0].length);
+      // only when he's talking *to* them ("sheep ur", "sheep, ...", "sheep mate").
+      // "niko the legend" is about niko, the name is the point
+      const addressed = /^[,:]/.test(m[0].slice(m[1]!.length + (m[0].startsWith('@') ? 1 : 0)).trim()) ||
+        vocative.test(after) || /^(?:ur|u|you|your|youre|you're|ya)\b/i.test(after) ||
+        // "sheep blancmange ur...": another name next, decided on the next round
+        isName(after.match(/^@?([\p{L}\p{N}_.]+)/u)?.[1] ?? '');
+      if (!addressed) break;
+      const rest = after.replace(vocative, '');
       if (!rest.trim()) break;
       out = rest;
     }

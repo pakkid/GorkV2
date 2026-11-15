@@ -326,6 +326,8 @@ export interface Transcript {
   ids: Set<string>;
   images: { url: string; id: string }[];
   newCount: number;
+  // ids of the messages from other people gork hasn't reacted to yet, oldest first
+  newIds: string[];
   firstId?: string;
   lastId?: string;
 }
@@ -358,6 +360,7 @@ export function renderTranscript(
   const lines: string[] = [];
   const images: Transcript['images'] = [];
   let newCount = 0;
+  const newIds: string[] = [];
   let markedNew = false;
   let lastDay = '';
   let prevAt = 0;
@@ -378,7 +381,10 @@ export function renderTranscript(
       lines.push('', '--- new since you last spoke/looked ---');
       markedNew = true;
     }
-    if (isNew && !m.self) newCount++;
+    if (isNew && !m.self) {
+      newCount++;
+      newIds.push(m.id);
+    }
 
     const day = dateFmt.format(m.createdAt);
     if (day !== lastDay) {
@@ -447,6 +453,7 @@ export function renderTranscript(
     // only the newest images are worth the latency
     images: images.slice(-cfg.maxImages),
     newCount,
+    newIds,
     firstId: window[0]?.id,
     lastId: last?.id,
   };

@@ -239,6 +239,8 @@ export function contextPrompt(opts: {
   ruts: string[];
   // words he keeps starting his messages with
   openers?: string[];
+  // ids of the messages he hasn't answered yet
+  fresh?: string[];
   members?: string;
   // the server's custom emojis, as :name:
   emojis?: string;
@@ -267,6 +269,12 @@ export function contextPrompt(opts: {
   }
   if (opts.said.length) {
     notes.push(`You already did this turn, don't repeat it:\n${opts.said.map((s) => `- ${s}`).join('\n')}`);
+  }
+  if (opts.fresh?.length) {
+    const ids = opts.fresh.slice(-8);
+    notes.push(
+      `Only these messages are new: ${ids.join(', ')}. Respond to them, and only reply to one of those ids. Everything above the "new" marker is already handled. Don't answer an old question again or carry on an old bit.`
+    );
   }
   if (opts.openers?.length) {
     notes.push(
