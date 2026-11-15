@@ -101,15 +101,40 @@ async function track(
 }
 
 /**
+ * Fetch images up front so one dead link (deleted message, expired cdn url) gets
+ * dropped instead of failing the whole call on every model, and so fallbacks
+ * don't download everything again.
+ */
+async function loadImages(images: ThinkInput['images'], signal?: AbortSignal) {
+  const loaded = await Promise.all(
+    images.map(async (img) => {
+      try {
+        const timeout = AbortSignal.timeout(5000);
+        const res = await fetch(img.url, {
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const mediaType = res.headers.get('content-type')?.split(';')[0] || 'image/png';
+        return { id: img.id, data: new Uint8Array(await res.arrayBuffer()), mediaType };
+      } catch (error) {
+        log.debug(`skipping image from message ${img.id}: ${(error as Error).message}`);
+        return undefined;
+      }
+    })
+  );
+  return loaded.filter((img) => img !== undefined);
+}
+
+/**
  * One model call that both decides whether to talk and writes the messages.
  * Actions are yielded the moment each one is fully generated, so the first
  * message hits discord while the rest are still being written.
  */
 export async function* think(input: ThinkInput): AsyncGenerator<Action> {
   const content: UserContent = [{ type: 'text', text: input.prompt }];
-  for (const img of input.images) {
+  for (const img of await loadImages(input.images, input.signal)) {
     content.push({ type: 'text', text: `(image from message ${img.id})` });
-    content.push({ type: 'image', image: new URL(img.url) });
+    content.push({ type: 'image', image: img.data, mediaType: img.mediaType });
   }
 
   for (const [i, model] of models.entries()) {
