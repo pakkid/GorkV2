@@ -66,8 +66,8 @@ export const timing = {
 
 export const limits = {
   // after this many "stay quiet" decisions in a row, stop watching a channel until pinged
-  maxQuietStreak: 12,
-  quietCooldownMs: 30 * 60 * 1000,
+  maxQuietStreak: 25,
+  quietCooldownMs: 10 * 60 * 1000,
   // max model calls per channel per minute
   callsPerMinute: 15,
   // /shutup duration
