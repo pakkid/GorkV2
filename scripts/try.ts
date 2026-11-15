@@ -10,6 +10,7 @@ const { think } = await import('../src/ai/think');
 const { env } = await import('../src/env');
 const { ChannelLog, renderTranscript } = await import('../src/history');
 const { web } = await import('../src/config');
+const { findRuts } = await import('../src/ruts');
 const { canSearchWeb, searchWeb } = await import('../src/web-search');
 
 const message = process.argv.slice(2).join(' ') || 'gork what do u think of my new haircut';
@@ -49,7 +50,8 @@ const prompt = (searches: string[], said: string[], canSearch: boolean) =>
     transcript: transcript.text,
     pinged: true,
     interrupted: [],
-    recent: log.messages.filter((m) => m.self).map((m) => m.content),
+    ruts: findRuts(log.messages).bits.map((b) => b.shown),
+    openers: findRuts(log.messages).openers,
     members: 'Alex (@alex) <@111>\nSam (@sam) <@222>\nNikolai (Niko B, @niko.b) <@333>',
     emojis: ':pepela: :skull_cry:',
     searches,

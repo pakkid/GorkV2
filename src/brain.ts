@@ -14,6 +14,7 @@ import {
 import { logger } from './log';
 import { mentionNames, roster } from './members';
 import { modeOf, ownerRules, settings } from './settings';
+import { findRuts } from './ruts';
 import { recordSent, recordTurn } from './stats';
 import { canSearchWeb, searchWeb } from './web-search';
 
@@ -204,10 +205,8 @@ async function run(state: ChannelState) {
     let lastSent = 0;
     const guild = 'guild' in state.channel ? state.channel.guild : null;
     const members = guild ? roster(guild, chLog).text : undefined;
-    const recent = chLog.messages
-      .filter((m) => m.self && !m.deleted)
-      .slice(-history.recentSelf)
-      .map((m) => m.content.replace(/\s+/g, ' ').slice(0, 160));
+    // bits gork has been flogging lately, so a joke can't turn into his whole personality
+    const ruts = findRuts(chLog.messages);
     // anything gork already said here, normalized, so he can't post the same line twice
     const spoken = new Set(chLog.messages.filter((m) => m.self).map((m) => normalize(m.content)));
 
@@ -231,7 +230,8 @@ async function run(state: ChannelState) {
           interrupted: [...interruptedBy]
             .map((id) => chLog.byId.get(id)?.name)
             .filter((n): n is string => !!n),
-          recent,
+          ruts: ruts.bits.map((b) => b.shown),
+          openers: ruts.openers,
           members,
           emojis,
           searches,
@@ -254,10 +254,17 @@ async function run(state: ChannelState) {
           }
           continue;
         }
+        action.text = ruts.dropName(action.text);
         const key = normalize(action.text);
         // short stuff like "no" or "lmao" is allowed to come up again
         if (key.length >= 10 && spoken.has(key)) {
           log.info(`${state.place}: dropped a repeat: ${action.text}`);
+          continue;
+        }
+        // a chime-in nobody asked for that's just the same bit again: skip it.
+        // when pinged he still answers, the prompt already told him to drop it
+        if (!urgent && ruts.isTired(action.text)) {
+          log.info(`${state.place}: dropped a worn-out bit: ${action.text}`);
           continue;
         }
         spoken.add(key);

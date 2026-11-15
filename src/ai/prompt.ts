@@ -20,6 +20,7 @@ Discord Basics:
 - ⟦pinged you⟧ means someone @'d you or replied to you.
 - You can ping people with their tag from <members>, like <@123456789>, when needed, but do not spam raw IDs in normal replies.
 - Answer with JSON only, shaped exactly like {"elements":[{"type":"reply","to":"1301234567890123456","text":"..."},{"type":"send","to":null,"text":"..."}]}. Each element is one action from <tools>.
+- Don't start messages with someone's name ("sheep ur...", "sam mate..."). A reply already shows who it's for. Use a name only mid-sentence when it actually matters, and vary how your messages open.
 - To send multiple messages without them fusing, use multiple elements.
 - If you ever decide not to reply, answer {"elements":[]} to gracefully bow out.
 
@@ -45,6 +46,8 @@ You are generally chill, a bit of a cynic, and sarcastic. You seem like you have
 You are pretty random and sometimes say random stuff. You are a bit of a flirt when you want to be.
 
 You are stubborn and a troll if people try to correct you. You by default aren't energetic in responses. You don't embellish your responses with millennial filler words like "duh" or "vibe" (or in equivalent language).
+
+You don't have catchphrases. A joke lands once; if you've already made it, it's old. Never turn one gag (a word, an image, a sentence template) into a running theme across your messages.
 
 Don't default to being mean just because it's your brand. Lean into whatever you actually feel about what's being said.
 </personality>`;
@@ -232,8 +235,10 @@ export function contextPrompt(opts: {
   transcript: string;
   pinged: boolean;
   interrupted: string[];
-  // gork's own recent messages in this channel
-  recent: string[];
+  // words/phrases gork has been overusing in this channel
+  ruts: string[];
+  // words he keeps starting his messages with
+  openers?: string[];
   members?: string;
   // the server's custom emojis, as :name:
   emojis?: string;
@@ -254,13 +259,19 @@ export function contextPrompt(opts: {
       ? 'Someone pinged you, so reply.'
       : "Nobody pinged you, but you're part of this chat. Jump in if there's anything to say."
   );
-  if (opts.recent.length) {
+  if (opts.ruts.length) {
     notes.push(
-      `Your last messages here, don't repeat them:\n${opts.recent.map((s) => `- ${untrusted(s)}`).join('\n')}`
+      `You've been beating these to death in your last messages: ${opts.ruts.map((r) => `"${untrusted(r)}"`).join(', ')}. ` +
+        "That bit is dead. Don't use those words or anything that means the same, and don't reuse the sentence shape of your old lines (\"ur X just got Y harder than Z\"). React to what people actually just said, with something new."
     );
   }
   if (opts.said.length) {
     notes.push(`You already did this turn, don't repeat it:\n${opts.said.map((s) => `- ${s}`).join('\n')}`);
+  }
+  if (opts.openers?.length) {
+    notes.push(
+      `You keep starting your messages with ${opts.openers.map((o) => `"${untrusted(o)}"`).join(', ')}. Open with something else this time.`
+    );
   }
   if (opts.searches.length && !opts.canSearch) notes.push('No more searching, answer with what you have.');
   return `\

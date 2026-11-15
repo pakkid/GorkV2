@@ -29,8 +29,6 @@ export const history = {
   gapMs: 30 * 60 * 1000,
   // on a fresh start, backfilled messages younger than this still count as new
   freshMs: 2 * 60 * 1000,
-  // gork's own recent messages listed back to him so he stops reusing bits
-  recentSelf: 15,
 };
 
 // the server member list gork gets to see
