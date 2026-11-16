@@ -6,6 +6,8 @@ const WINDOW = 20;
 const MIN_USES = 3;
 // ...and at this many, a chime-in that leans on it gets dropped outright
 const HARD_USES = 6;
+// whoever sent the last this-many human messages counts as in the conversation
+const RECENT_SPEAKERS = 15;
 
 const stop = new Set(
   (
@@ -72,9 +74,10 @@ export function findRuts(messages: ChatMsg[]): Ruts {
   const mine = live.filter((m) => m.self).slice(-WINDOW);
   const theirs = live.filter((m) => !m.self).slice(-WINDOW * 2);
 
-  // people's names aren't a bit, gork is just talking to them
+  // names of people actually in the conversation aren't a bit, gork is just talking to
+  // them. someone who isn't here ("niko the divine" every other message) is fair game
   const names = new Set<string>();
-  for (const m of live) {
+  for (const m of theirs.slice(-RECENT_SPEAKERS)) {
     for (const n of [m.name, m.globalName, m.username]) {
       for (const w of words(n ?? '')) {
         names.add(stem(w));

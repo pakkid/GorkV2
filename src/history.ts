@@ -302,6 +302,26 @@ export function untrusted(text: string) {
     .replace(/\n/g, '\n    ');
 }
 
+// gork only reads english, on purpose: people kept making him "only answer in chinese".
+// any run of letters outside the latin alphabet gets swapped for a marker. latin-script languages (spanish, french...) can't be told apart from english
+// slang reliably, so those are left to the prompt
+const foreign = String.raw`[^\P{L}\p{Script=Latin}]`;
+const filler = String.raw`[\p{M}\p{P}\p{S}\p{N}\s\u3000-\u303f\uff00-\uffef]`;
+const foreignRun = new RegExp(`${foreign}(?:${filler}*${foreign})*\\p{M}*`, 'gu');
+const hasForeign = new RegExp(foreign, 'u');
+
+// no language name: given "russian" the model goes for the russians, not the person
+export const FOREIGN = '⟦something not in english⟧';
+
+/** Every run of non-english script in a message, swapped for `marker`. */
+export function hideForeign(text: string, marker = FOREIGN) {
+  if (!hasForeign.test(text)) return text;
+  return text
+    .replace(foreignRun, marker)
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 /** Names are one line, and nobody else gets to be "gork (you)". */
 function cleanName(name: string) {
   return untrusted(name.replace(/\s+/g, ' ').replace(/\(\s*you\s*\)/gi, '').trim()) || '?';
@@ -409,14 +429,14 @@ export function renderTranscript(
       if (t) {
         head += ` ↪ ${m.replyToId} ${t.self ? 'gork (you)' : cleanName(t.name)}`;
       } else if (m.replySnippet) {
-        head += ` ↪ (older ${m.replyToId}) ${untrusted(m.replySnippet)}`;
+        head += ` ↪ (older ${m.replyToId}) ${hideForeign(untrusted(m.replySnippet))}`;
       } else {
         head += ` ↪ (older ${m.replyToId})`;
       }
     }
 
     // old walls of text get clipped, new stuff is shown in full
-    const body = untrusted(isNew ? m.content : clip(m.content, 600));
+    const body = hideForeign(untrusted(isNew ? m.content : clip(m.content, 600)));
     const tags: string[] = [];
     if (m.mentionsSelf && !m.self) tags.push('pinged you');
     if (interruptedBy.has(m.id)) tags.push('interrupted you');

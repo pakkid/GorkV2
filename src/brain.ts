@@ -7,6 +7,7 @@ import {
   type ChannelLog,
   type ChatMsg,
   channelLog,
+  hideForeign,
   renderTranscript,
   type Transcript,
   untrusted,
@@ -213,9 +214,12 @@ async function run(state: ChannelState) {
     const emojis = guild ? emojiList(guild) : undefined;
     const said: string[] = [];
     const searches: string[] = [];
+    // worn-out lines that got dropped, so a ping that only produced those gets one more go
+    const tired: string[] = [];
+    let retried = false;
 
     // gork can look things up on the web, then think again with the results
-    for (let round = 0; round <= web.maxSearches; round++) {
+    for (let round = 0; round <= web.maxSearches + 1; round++) {
       const canSearch = canSearchWeb && round < web.maxSearches;
       const wanted: string[] = [];
 
@@ -237,6 +241,7 @@ async function run(state: ChannelState) {
           emojis,
           searches,
           said,
+          tired: retried ? tired : [],
           canSearch,
         }),
         images: round === 0 ? transcript.images : [],
@@ -255,7 +260,13 @@ async function run(state: ChannelState) {
           }
           continue;
         }
-        action.text = ruts.dropName(action.text);
+        // english only, no matter who asks. whatever's left (if anything) goes out
+        action.text = hideForeign(ruts.dropName(action.text), '');
+        // "?" left over from "Привет, как дела?" isn't a message
+        if (!/[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(action.text)) {
+          log.info(`${state.place}: dropped a message that wasn't in english`);
+          continue;
+        }
         // the model likes replying to something from 10 minutes ago because it's in the
         // transcript. old stuff was already dealt with: point the reply at what's new
         if (action.type === 'reply' && !transcript.newIds.includes(action.to ?? '')) {
@@ -270,10 +281,11 @@ async function run(state: ChannelState) {
           log.info(`${state.place}: dropped a repeat: ${action.text}`);
           continue;
         }
-        // a chime-in nobody asked for that's just the same bit again: skip it.
-        // when pinged he still answers, the prompt already told him to drop it
-        if (!urgent && ruts.isTired(action.text)) {
+        // the same bit again: skip it. when pinged he gets one retry below, and if the
+        // retry is still the bit it goes out anyway, a ping always gets an answer
+        if (!(urgent && retried) && ruts.isTired(action.text)) {
           log.info(`${state.place}: dropped a worn-out bit: ${action.text}`);
+          tired.push(action.text);
           continue;
         }
         spoken.add(key);
@@ -293,7 +305,14 @@ async function run(state: ChannelState) {
         }
       }
 
-      if (!wanted.length || abort.signal.aborted) break;
+      if (abort.signal.aborted) break;
+      if (!wanted.length) {
+        if (!urgent || acted > 0 || !tired.length || retried) break;
+        retried = true;
+        log.info(`${state.place}: pinged but only had worn-out bits, trying again`);
+        continue;
+      }
+      if (round >= web.maxSearches) break;
       if (!urgent && round === 0) stopTyping = startTyping(state.channel);
       const queries = wanted.slice(0, 2);
       log.info(`${state.place}: searching the web for ${queries.map((q) => `"${q}"`).join(', ')}`);
