@@ -15,6 +15,7 @@ import {
 import { logger } from './log';
 import { mentionNames, roster } from './members';
 import { modeOf, ownerRules, settings } from './settings';
+import { dodge, isDodge, isPolitical } from './politics';
 import { findRuts } from './ruts';
 import { recordSent, recordTurn } from './stats';
 import { canSearchWeb, searchWeb } from './web-search';
@@ -217,6 +218,8 @@ async function run(state: ChannelState) {
     // worn-out lines that got dropped, so a ping that only produced those gets one more go
     const tired: string[] = [];
     let retried = false;
+    // a ping about politics gets one flat no per turn, nothing more
+    let dodged = false;
 
     // gork can look things up on the web, then think again with the results
     for (let round = 0; round <= web.maxSearches + 1; round++) {
@@ -275,9 +278,30 @@ async function run(state: ChannelState) {
           action.to = to;
           if (!to) action.type = 'send';
         }
+        // no politics, however he got talked into it. a take on it, or anything more than a
+        // few words aimed at a political message, becomes a flat no (if pinged) or nothing
+        const target = action.type === 'reply' ? chLog.byId.get(action.to ?? '') : undefined;
+        const onPolitics = !!target && !target.self && isPolitical(target.content);
+        const words = action.text.split(/\s+/).filter(Boolean).length;
+        if (
+          !isDodge(action.text) &&
+          (isPolitical(action.text) || (onPolitics && (!urgent || words > 10)))
+        ) {
+          if (!urgent || dodged) {
+            log.info(`${state.place}: dropped something political: ${action.text}`);
+            continue;
+          }
+          log.info(`${state.place}: swapped a political answer for a dodge: ${action.text}`);
+          const recent = chLog.messages.filter((m) => m.self).slice(-10).map((m) => m.content.toLowerCase());
+          action.text = dodge(recent);
+        }
+        if (isDodge(action.text)) {
+          if (dodged) continue;
+          dodged = true;
+        }
         const key = normalize(action.text);
-        // short stuff like "no" or "lmao" is allowed to come up again
-        if (key.length >= 10 && spoken.has(key)) {
+        // short stuff like "no" or "lmao" is allowed to come up again (and so is "not touching that")
+        if (key.length >= 10 && spoken.has(key) && !isDodge(action.text)) {
           log.info(`${state.place}: dropped a repeat: ${action.text}`);
           continue;
         }

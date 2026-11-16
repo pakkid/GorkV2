@@ -6,6 +6,7 @@ import {
 } from 'discord.js';
 import { history as cfg, timezone } from './config';
 import { logger } from './log';
+import { isPolitical } from './politics';
 
 const log = logger('history');
 
@@ -439,6 +440,7 @@ export function renderTranscript(
     const body = hideForeign(untrusted(isNew ? m.content : clip(m.content, 600)));
     const tags: string[] = [];
     if (m.mentionsSelf && !m.self) tags.push('pinged you');
+    if (!m.self && isPolitical(m.content)) tags.push('political, stay out');
     if (interruptedBy.has(m.id)) tags.push('interrupted you');
     if (m.edited) tags.push('edited');
     for (const a of m.attachments) {
