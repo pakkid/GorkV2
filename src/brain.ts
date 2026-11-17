@@ -1,13 +1,13 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Guild, Message, SendableChannels } from 'discord.js';
-import { contextPrompt, systemPrompt } from './ai/prompt';
+import { contextPrompt, exampleLines, systemPrompt } from './ai/prompt';
 import { type Action, think } from './ai/think';
 import { history, keywords, limits, timezone, timing, web } from './config';
 import {
   type ChannelLog,
   type ChatMsg,
   channelLog,
-  hideForeign,
+  hasForeignScript,
   renderTranscript,
   type Transcript,
   untrusted,
@@ -215,8 +215,11 @@ async function run(state: ChannelState) {
     const emojis = guild ? emojiList(guild) : undefined;
     const said: string[] = [];
     const searches: string[] = [];
-    // worn-out lines that got dropped, so a ping that only produced those gets one more go
+    // lines that got thrown out (worn-out bit, not english), so a ping that only produced
+    // those gets one more go
     const tired: string[] = [];
+    const foreign: string[] = [];
+    let sent = 0;
     let retried = false;
     // a ping about politics gets one flat no per turn, nothing more
     let dodged = false;
@@ -245,6 +248,8 @@ async function run(state: ChannelState) {
           searches,
           said,
           tired: retried ? tired : [],
+          foreign: retried ? foreign : [],
+          silent: retried && !tired.length && !foreign.length,
           canSearch,
         }),
         images: round === 0 ? transcript.images : [],
@@ -263,11 +268,12 @@ async function run(state: ChannelState) {
           }
           continue;
         }
-        // english only, no matter who asks. whatever's left (if anything) goes out
-        action.text = hideForeign(ruts.dropName(action.text), '');
-        // "?" left over from "Привет, как дела?" isn't a message
-        if (!/[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(action.text)) {
-          log.info(`${state.place}: dropped a message that wasn't in english`);
+        action.text = ruts.dropName(action.text);
+        // english only, no matter who asks. a line with any of another language in it goes
+        // whole: sending what's left turned "好的 😭" into gork answering in emojis
+        if (hasForeignScript(action.text)) {
+          log.info(`${state.place}: dropped a message that wasn't in english: ${action.text}`);
+          foreign.push(action.text);
           continue;
         }
         // the model likes replying to something from 10 minutes ago because it's in the
@@ -300,6 +306,14 @@ async function run(state: ChannelState) {
           dodged = true;
         }
         const key = normalize(action.text);
+        // lifted straight from his examples: counts as a dead bit (a ping gets a retry)
+        if (copied.has(key)) {
+          log.info(`${state.place}: dropped a line copied from the examples: ${action.text}`);
+          if (!(urgent && retried)) {
+            tired.push(action.text);
+            continue;
+          }
+        }
         // short stuff like "no" or "lmao" is allowed to come up again (and so is "not touching that")
         if (key.length >= 10 && spoken.has(key) && !isDodge(action.text)) {
           log.info(`${state.place}: dropped a repeat: ${action.text}`);
@@ -324,6 +338,7 @@ async function run(state: ChannelState) {
         if (text) {
           lastSent = Date.now();
           acted++;
+          sent++;
           state.spoke++;
           said.push(text);
         }
@@ -331,9 +346,10 @@ async function run(state: ChannelState) {
 
       if (abort.signal.aborted) break;
       if (!wanted.length) {
-        if (!urgent || acted > 0 || !tired.length || retried) break;
+        // a react alone doesn't count as answering a ping
+        if (!urgent || sent > 0 || retried) break;
         retried = true;
-        log.info(`${state.place}: pinged but only had worn-out bits, trying again`);
+        log.info(`${state.place}: pinged but everything he wrote got thrown out, trying again`);
         continue;
       }
       if (round >= web.maxSearches) break;
@@ -382,6 +398,9 @@ async function pace(channel: SendableChannels, text: string, lastSent: number, s
   }
   return true;
 }
+
+// "idk" and "xbox" are allowed, anything longer that's straight out of the examples isn't
+const copied = new Set(exampleLines.map(normalize).filter((k) => k.length >= 6));
 
 const prefix = /^\s*(?:\[#?\d+[^\]]*\]\s*)?(?:gork(?: \(you\))?\s*:\s*)?/i;
 

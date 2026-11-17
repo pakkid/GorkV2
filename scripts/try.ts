@@ -43,7 +43,7 @@ add('Alex', 'ok gork nobody asked');
 add('You', message, { ping: true });
 
 const transcript = renderTranscript(log);
-const prompt = (searches: string[], said: string[], canSearch: boolean) =>
+const prompt = (searches: string[], said: string[], canSearch: boolean, retry = { foreign: [] as string[], silent: false }) =>
   contextPrompt({
     place: 'the "test" Discord server, #general',
     time: new Date().toString(),
@@ -56,6 +56,8 @@ const prompt = (searches: string[], said: string[], canSearch: boolean) =>
     emojis: ':pepela: :skull_cry:',
     searches,
     said,
+    foreign: retry.foreign,
+    silent: retry.silent,
     canSearch,
   });
 
@@ -66,24 +68,44 @@ const started = Date.now();
 let count = 0;
 const searches: string[] = [];
 const said: string[] = [];
-// same loop as the bot: search, then think again with the results
-for (let round = 0; round <= web.maxSearches; round++) {
+const { hasForeignScript } = await import('../src/history');
+const foreign: string[] = [];
+const { exampleLines } = await import('../src/ai/prompt');
+const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+const copied = new Set(exampleLines.map(norm).filter((k) => k.length >= 6));
+let sent = 0;
+let retried = false;
+// same loop as the bot: search, then think again with the results, and a ping that only
+// got a react (or a line that wasn't english) gets one more go
+for (let round = 0; round <= web.maxSearches + 1; round++) {
   const canSearch = canSearchWeb && round < web.maxSearches;
   const wanted: string[] = [];
   for await (const action of think({
     system: systemPrompt(false, undefined, canSearchWeb),
-    prompt: prompt(searches, said, canSearch),
+    prompt: prompt(searches, said, canSearch, retried ? { foreign, silent: !foreign.length } : undefined),
     images: [],
   })) {
     count++;
     console.log(`+${Date.now() - started}ms`, action.type, action.to ?? '', JSON.stringify(action.text));
     if (action.type === 'search') {
       if (canSearch) wanted.push(action.text);
+    } else if (action.type !== 'react' && hasForeignScript(action.text)) {
+      console.log('  (not english, the bot would drop that)');
+      foreign.push(action.text);
+    } else if (action.type !== 'react' && copied.has(norm(action.text))) {
+      console.log('  (copied from the examples, the bot would drop that)');
     } else {
+      if (action.type !== 'react') sent++;
       said.push(action.type === 'react' ? `(reacted ${action.text})` : action.text);
     }
   }
-  if (!wanted.length) break;
+  if (!wanted.length) {
+    if (sent > 0 || retried) break;
+    retried = true;
+    console.log('  (pinged but nothing said, trying again like the bot does)');
+    continue;
+  }
+  if (round >= web.maxSearches) break;
   for (const q of wanted.slice(0, 2)) searches.push(`<search query="${q}">\n${await searchWeb(q)}\n</search>`);
   console.log(`  (searched ${wanted.slice(0, 2).length}, thinking again)`);
 }

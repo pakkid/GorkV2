@@ -308,11 +308,17 @@ export function untrusted(text: string) {
 // slang reliably, so those are left to the prompt
 const foreign = String.raw`[^\P{L}\p{Script=Latin}]`;
 const filler = String.raw`[\p{M}\p{P}\p{S}\p{N}\s\u3000-\u303f\uff00-\uffef]`;
-const foreignRun = new RegExp(`${foreign}(?:${filler}*${foreign})*\\p{M}*`, 'gu');
+// trailing 。！？ etc. go with it, an english sentence doesn't end in 。
+const foreignRun = new RegExp(`${foreign}(?:${filler}*${foreign})*[\\p{M}\\u3000-\\u303f\\uff00-\\uffef]*`, 'gu');
 const hasForeign = new RegExp(foreign, 'u');
 
 // no language name: given "russian" the model goes for the russians, not the person
 export const FOREIGN = '⟦something not in english⟧';
+
+/** Whether there's any non-english script in it at all. */
+export function hasForeignScript(text: string) {
+  return hasForeign.test(text);
+}
 
 /** Every run of non-english script in a message, swapped for `marker`. */
 export function hideForeign(text: string, marker = FOREIGN) {
