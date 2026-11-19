@@ -4,6 +4,10 @@ ENV NODE_ENV=production \
     DATA_DIR=/app/data
 WORKDIR /app
 
+# ffmpeg cuts frames out of gifs so gork sees the whole thing, not just the first frame
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 

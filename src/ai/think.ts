@@ -5,6 +5,7 @@ import { type LanguageModel, Output, streamText, type UserContent } from 'ai';
 import { z } from 'zod';
 import { timing } from '../config';
 import { env } from '../env';
+import { gifFrames } from '../gif-frames';
 import { logger } from '../log';
 import { recordUsage, type Where } from '../stats';
 
@@ -55,7 +56,8 @@ export type Action = z.infer<typeof actionSchema>;
 export interface ThinkInput {
   system: string;
   prompt: string;
-  images: { url: string; id: string }[];
+  // video: a gif's whole clip; it goes in as a grid of frames instead of the still
+  images: { url: string; id: string; video?: string }[];
   signal?: AbortSignal;
   // what the call was for, for the stats page
   where?: Where;
@@ -108,6 +110,10 @@ async function track(
 async function loadImages(images: ThinkInput['images'], signal?: AbortSignal) {
   const loaded = await Promise.all(
     images.map(async (img) => {
+      if (img.video) {
+        const grid = await gifFrames(img.video, signal);
+        if (grid) return { id: img.id, data: grid, mediaType: 'image/jpeg', gif: true };
+      }
       try {
         const timeout = AbortSignal.timeout(5000);
         const res = await fetch(img.url, {
@@ -115,7 +121,7 @@ async function loadImages(images: ThinkInput['images'], signal?: AbortSignal) {
         });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const mediaType = res.headers.get('content-type')?.split(';')[0] || 'image/png';
-        return { id: img.id, data: new Uint8Array(await res.arrayBuffer()), mediaType };
+        return { id: img.id, data: new Uint8Array(await res.arrayBuffer()), mediaType, gif: false };
       } catch (error) {
         log.debug(`skipping image from message ${img.id}: ${(error as Error).message}`);
         return undefined;
@@ -133,7 +139,12 @@ async function loadImages(images: ThinkInput['images'], signal?: AbortSignal) {
 export async function* think(input: ThinkInput): AsyncGenerator<Action> {
   const content: UserContent = [{ type: 'text', text: input.prompt }];
   for (const img of await loadImages(input.images, input.signal)) {
-    content.push({ type: 'text', text: `(image from message ${img.id})` });
+    content.push({
+      type: 'text',
+      text: img.gif
+        ? `(gif from message ${img.id}: 4 frames from across it, in order left to right, top to bottom)`
+        : `(image from message ${img.id})`,
+    });
     content.push({ type: 'image', image: img.data, mediaType: img.mediaType });
   }
 

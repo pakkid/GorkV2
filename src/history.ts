@@ -6,6 +6,7 @@ import {
 } from 'discord.js';
 import { history as cfg, timezone } from './config';
 import { logger } from './log';
+import { gifFrames } from './gif-frames';
 import { isPolitical } from './politics';
 import { settings } from './settings';
 
@@ -26,7 +27,8 @@ export interface ChatMsg {
   // fallback for when the replied-to message isn't in the buffer
   replySnippet?: string;
   // files, plus the picture from gif/image/video link embeds (klipy, tenor, youtube...)
-  attachments: { name: string; url: string; type: string }[];
+  // video: the whole clip (gif file or the mp4 a gif embed carries), to cut frames from
+  attachments: { name: string; url: string; type: string; video?: string }[];
   extras: string[];
   reactions: Map<string, number>;
   mentionsSelf: boolean;
@@ -91,6 +93,7 @@ export function toChatMsg(message: Message): ChatMsg {
         name: title || (kind === 'gifv' ? 'gif' : 'image'),
         url,
         type: kind === 'gifv' ? 'image/gif' : 'image/embed',
+        video: kind === 'gifv' ? (embed.video?.proxyURL ?? embed.video?.url) : undefined,
       });
       // the gif tag already carries the title
       if (kind === 'gifv' || kind === 'image') continue;
@@ -145,6 +148,7 @@ export function toChatMsg(message: Message): ChatMsg {
         name: a.name,
         url: a.url,
         type: a.contentType ?? 'unknown',
+        video: a.contentType === 'image/gif' ? a.url : undefined,
       })),
       ...embedImages,
     ],
@@ -264,7 +268,14 @@ export function recordMessage(message: Message): ChatMsg | undefined {
   const msg = toChatMsg(message);
   const log = channelLog(message.channelId);
   log.guildId ??= message.guildId;
-  return log.add(msg) ? msg : undefined;
+  if (!log.add(msg)) return;
+  warmGifs(msg);
+  return msg;
+}
+
+/** Start cutting a new gif's frames now, so they're ready by the time gork thinks. */
+function warmGifs(msg: ChatMsg) {
+  for (const a of msg.attachments) if (a.video) void gifFrames(a.video);
 }
 
 /** After a /forget or a new ignore: drop what gork shouldn't see any more from every channel he has loaded. */
@@ -280,7 +291,7 @@ export function recordEdit(message: Message | PartialMessage) {
   }
   const msg = toChatMsg(message);
   const log = peekLog(message.channelId);
-  if (log?.byId.has(message.id)) log.add(msg);
+  if (log?.byId.has(message.id) && log.add(msg)) warmGifs(msg);
 }
 
 export function recordDelete(channelId: string, id: string) {
@@ -403,7 +414,7 @@ export interface Transcript {
   text: string;
   // discord ids of every message shown
   ids: Set<string>;
-  images: { url: string; id: string }[];
+  images: { url: string; id: string; video?: string }[];
   newCount: number;
   // ids of the messages from other people gork hasn't reacted to yet, oldest first
   newIds: string[];
@@ -504,7 +515,7 @@ export function renderTranscript(
     for (const a of m.attachments) {
       const isImage = a.type.startsWith('image/');
       tags.push(`${a.type === 'image/gif' ? 'gif' : isImage ? 'image' : 'file'}: ${a.name}`);
-      if (isImage) images.push({ url: a.url, id: m.id });
+      if (isImage) images.push({ url: a.url, id: m.id, video: a.video });
     }
     tags.push(...m.extras);
     if (m.reactions.size) {
