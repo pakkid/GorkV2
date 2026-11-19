@@ -5,8 +5,8 @@ import { type Client, PermissionFlagsBits, type SendableChannels } from 'discord
 import { env } from '../env';
 import { logger } from '../log';
 import { systemPrompt } from '../ai/prompt';
-import { isTakenOver, sendAs, setTakeover } from '../brain';
-import { type ChatMsg, channelLog } from '../history';
+import { isTakenOver, resetTurns, sendAs, setTakeover } from '../brain';
+import { type ChatMsg, channelLog, pruneAll } from '../history';
 import { type Behavior, type Modifier, ownerRules, settings } from '../settings';
 import { summary } from '../stats';
 import { syncTokenmaxxing, tokenmaxxingStatus } from '../tokenmaxxing';
@@ -271,6 +271,13 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
       await channel.sendTyping().catch(() => {});
       return send(res, 200, { ok: true });
     }
+    if (method === 'POST' && url.pathname === '/api/live/forget') {
+      settings.forget('channel', channel.id);
+      pruneAll();
+      resetTurns((id) => id === channel.id);
+      log.info(`wiped gork's memory of ${channel.id} from the web ui`);
+      return send(res, 200, { ok: true });
+    }
     if (method === 'PUT' && url.pathname === '/api/live/takeover') {
       const on = (await readJson(req)).on === true;
       setTakeover(channel.id, on);
@@ -297,7 +304,7 @@ function parseBehavior(body: Record<string, unknown>): Behavior | undefined {
     const id = str(raw.id, 40) || Math.random().toString(36).slice(2, 10);
     modifiers.push({ id, name: str(raw.name, 60), text: str(raw.text, 2000), on: raw.on === true });
   }
-  return { modifiers, instructions: str(body.instructions, 8000) };
+  return { modifiers, instructions: str(body.instructions, 8000), opinions: str(body.opinions, 8000) };
 }
 
 /** Stats page, behaviour editor and live chat on WEB_PORT, for devices on the local network only. */

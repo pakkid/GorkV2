@@ -123,7 +123,7 @@
   .switch input:checked + span { background: var(--accent); }
   .switch input:checked + span::after { transform: translateX(16px); }
   .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
-  #instructions { min-height: 140px; }
+  #instructions, #opinions { min-height: 140px; }
   #status { color: var(--muted); font-size: 13px; }
   pre#prompt {
     white-space: pre-wrap; word-break: break-word; background: var(--panel); border: 1px solid var(--line);
@@ -263,6 +263,12 @@
       <textarea id="instructions" maxlength="8000" placeholder="No extra instructions"></textarea>
     </div>
 
+    <div class="section">
+      <div class="head"><h2>Likes &amp; opinions</h2></div>
+      <p class="hint">What gork likes, hates and thinks, in plain words. He treats these as his own taste: they come out in his takes when the topic comes up, never as a list or "i was told to". E.g. "loves the warriors, thinks pineapple on pizza is a crime, can't stand marvel movies".</p>
+      <textarea id="opinions" maxlength="8000" placeholder="No opinions set"></textarea>
+    </div>
+
     <details id="preview">
       <summary>Show the full prompt gork gets here</summary>
       <pre id="prompt"></pre>
@@ -274,6 +280,7 @@
     <div class="bar">
       <select id="liveChannel" aria-label="Channel"></select>
       <label><span class="switch"><input type="checkbox" id="takeover"><span></span></span>Take over</label>
+      <button class="danger" id="forget" type="button" title="Gork forgets everything said here so far and only remembers new messages">Wipe memory</button>
     </div>
     <div class="banner" id="takeoverNote" hidden>You're gork in this channel. He's reading along but won't say anything until you hand it back (or he restarts).</div>
     <div id="feed" aria-live="polite"></div>
@@ -552,7 +559,7 @@ loadTmx();
 setInterval(() => { if (!$('statsView').hidden && !document.hidden) loadTmx(); }, 60_000);
 
 // ---------------------------------------------------------------- behaviour
-let behaviour = { modifiers: [], instructions: '' };
+let behaviour = { modifiers: [], instructions: '', opinions: '' };
 let saveTimer;
 let pending = null;
 
@@ -567,6 +574,7 @@ async function loadBehaviour() {
   $('status').textContent = '';
   renderMods();
   $('instructions').value = behaviour.instructions;
+  $('opinions').value = behaviour.opinions ?? '';
   if ($('preview').open) loadPrompt();
 }
 
@@ -636,6 +644,7 @@ $('addMod').addEventListener('click', () => {
   $('mods').lastElementChild.querySelector('input[type=text]').focus();
 });
 $('instructions').addEventListener('input', () => { behaviour.instructions = $('instructions').value; save(); });
+$('opinions').addEventListener('input', () => { behaviour.opinions = $('opinions').value; save(); });
 $('preview').addEventListener('toggle', () => { if ($('preview').open) loadPrompt(); });
 
 // ---------------------------------------------------------------- live
@@ -792,6 +801,15 @@ $('takeover').addEventListener('change', async () => {
     toast(on ? "You're driving. gork is muted here" : 'Handed back to gork');
     loadLive();
   } catch (e) { $('takeover').checked = !on; toast(e.message); }
+});
+$('forget').addEventListener('click', async () => {
+  if (!liveId || !confirm('Wipe gork\'s memory of this channel? He\'ll only remember messages from now on.')) return;
+  try {
+    await api(`/api/live/forget?channel=${liveId}`, { method: 'POST' });
+    rows.clear();
+    toast('Memory wiped');
+    loadMessages();
+  } catch (e) { toast(e.message); }
 });
 $('draft').addEventListener('keydown', (e) => {
   if (suggestion && !e.isComposing) {

@@ -7,6 +7,7 @@ import {
 import { history as cfg, timezone } from './config';
 import { logger } from './log';
 import { isPolitical } from './politics';
+import { settings } from './settings';
 
 const log = logger('history');
 
@@ -142,13 +143,34 @@ export class ChannelLog {
   byId = new Map<string, ChatMsg>();
   // id of the newest message gork has already thought about
   lastSeenId?: string;
+  // undefined until the first message or backfill says which server this is
+  guildId?: string | null;
   private backfilled?: Promise<void>;
 
-  add(msg: ChatMsg) {
+  constructor(readonly id = '') {}
+
+  /** Wiped with /forget, or from someone gork is set to ignore: he never sees it. */
+  hidden(msg: Pick<ChatMsg, 'createdAt' | 'authorId' | 'self'>) {
+    if (msg.createdAt < settings.memoryStart(this.guildId, this.id)) return true;
+    return !msg.self && settings.isIgnored(this.guildId, msg.authorId);
+  }
+
+  /** Drop everything that's hidden now, after a /forget or a new ignore. */
+  prune() {
+    const keep = this.messages.filter((m) => !this.hidden(m));
+    if (keep.length === this.messages.length) return;
+    this.messages = keep;
+    this.byId = new Map(keep.map((m) => [m.id, m]));
+    if (!keep.length) this.lastSeenId = undefined;
+  }
+
+  /** Returns false if gork isn't allowed to see it. */
+  add(msg: ChatMsg): boolean {
+    if (this.hidden(msg)) return false;
     const existing = this.byId.get(msg.id);
     if (existing) {
       Object.assign(existing, msg);
-      return;
+      return true;
     }
     this.byId.set(msg.id, msg);
     const last = this.messages.at(-1);
@@ -162,11 +184,13 @@ export class ChannelLog {
       const dropped = this.messages.shift();
       if (dropped) this.byId.delete(dropped.id);
     }
+    return true;
   }
 
   /** Pull recent history from discord once, so gork isn't blind after a restart. */
   backfill(channel: TextBasedChannel): Promise<void> {
     this.backfilled ??= (async () => {
+      if (this.guildId === undefined) this.guildId = 'guildId' in channel ? channel.guildId : null;
       const started = Date.now();
       const fetched = await channel.messages.fetch({ limit: cfg.backfill });
       const msgs = [...fetched.values()]
@@ -199,7 +223,7 @@ export function channelLog(channelId: string): ChannelLog {
     // refresh LRU position
     channels.delete(channelId);
   } else {
-    entry = new ChannelLog();
+    entry = new ChannelLog(channelId);
   }
   channels.set(channelId, entry);
   if (channels.size > cfg.maxChannels) {
@@ -216,8 +240,14 @@ export function peekLog(channelId: string) {
 export function recordMessage(message: Message): ChatMsg | undefined {
   if (message.content.startsWith('//')) return;
   const msg = toChatMsg(message);
-  channelLog(message.channelId).add(msg);
-  return msg;
+  const log = channelLog(message.channelId);
+  log.guildId ??= message.guildId;
+  return log.add(msg) ? msg : undefined;
+}
+
+/** After a /forget or a new ignore: drop what gork shouldn't see any more from every channel he has loaded. */
+export function pruneAll() {
+  for (const log of channels.values()) log.prune();
 }
 
 export function recordEdit(message: Message | PartialMessage) {

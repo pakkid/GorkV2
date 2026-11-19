@@ -60,8 +60,8 @@ Plain Docker works the same: put the variables in `.env` and run `docker compose
 Gork serves a small web page on port `8787` (`WEB_PORT`, `0` turns it off). Open `http://<server's LAN ip>:8787`.
 
 - **Stats**: API cost, tokens, model calls, messages he sent, how often he talks, the channels he talks in most, and a per-model breakdown, per server and time range. Cost comes from OpenRouter when it reports it; otherwise from the price table in `src/config.ts` (the default models are filled in), which `AI_PRICES` (`model=in/out,...` in $ per million tokens) can add to or override. Gateways that don't report token counts while streaming get estimates from text length, marked as estimated.
-- **Behaviour**: modifiers you switch on and off (a few presets come with it, all off) and free-text instructions, for everywhere or per server. Server settings stack on top of "Everywhere". Changes apply to his next message; "Show the full prompt" shows exactly what he gets.
-- **Live**: every channel gork is allowed to talk in (and DMs with the owner), updating every few seconds. Type to send as gork: replies work, `@` and `:` pop up a list of the server's people and its emojis plus regular ones to autocomplete, and he shows as typing while you do. **Take over** a channel and he stops answering there, even when pinged, until you hand it back; a restart hands it back too. Whatever you say as him goes in his history, so he carries on from it.
+- **Behaviour**: modifiers you switch on and off (a few presets come with it, all off), free-text instructions, and **likes & opinions** (his taste: it comes out in his takes when the topic comes up, never as a list or "i was told to"), for everywhere or per server. Messages that quote any of it word for word, or where he says he was told or set up to act some way, are dropped before they're sent. Server settings stack on top of "Everywhere". Changes apply to his next message; "Show the full prompt" shows exactly what he gets.
+- **Live**: every channel gork is allowed to talk in (and DMs with the owner), updating every few seconds. Type to send as gork: replies work, `@` and `:` pop up a list of the server's people and its emojis plus regular ones to autocomplete, and he shows as typing while you do. **Take over** a channel and he stops answering there, even when pinged, until you hand it back; a restart hands it back too. **Wipe memory** does `/forget` for that channel. Whatever you say as him goes in his history, so he carries on from it.
 
 It's LAN only: requests from anything other than a private, loopback or link-local address are refused, as are requests whose `Host` isn't an ip, `localhost`, a bare hostname or a `.local`/`.lan`/`.home.arpa`/`.internal` name. There's no password, so anyone on your network can use it, including talking as gork from the Live tab. In Docker, set `WEB_BIND` to the host's LAN ip so the port isn't published on other interfaces either. Don't put it behind a reverse proxy on the same machine: everything would look local.
 
@@ -74,6 +74,8 @@ Gork starts with **no channel access**. Whitelist a channel with `/mode set scop
 | `/mode set/show/clear` | When gork talks: `relevance` (he decides), `ping`, `ping+keyword`, `none` (bot owner only) |
 | `/safety set/show/clear` | `unfiltered` or `safe` (SFW) per server/channel (bot owner only) |
 | `/shutup` | silence gork in a channel for 6h; pinging him wakes him back up (bot owner only) |
+| `/forget [scope]` | wipe gork's memory of this channel, the server or everywhere: he only remembers messages from now on, even after a restart (bot owner only) |
+| `/ignore add/remove/list` | turn gork off for someone, in this server or everywhere: he doesn't see their messages or answer them (bot owner only; the owner can't be ignored) |
 | `/ping` | latency check |
 
 Start a message with `//` to hide it from gork.

@@ -22,6 +22,8 @@ export interface Modifier {
 export interface Behavior {
   modifiers: Modifier[];
   instructions: string;
+  // what gork likes and thinks, in the owner's words. shapes his takes, never quoted
+  opinions: string;
 }
 
 interface Data {
@@ -31,6 +33,10 @@ interface Data {
   silenced: Record<string, number>;
   // 'global' or a guild id
   behavior: Record<string, Behavior>;
+  // people gork can't see or hear. 'global:<user id>' or 'guild:<guild id>:<user id>'
+  ignored: Record<string, true>;
+  // gork's memory starts here (epoch ms). 'global', 'guild:<id>' or 'channel:<id>'
+  forgotten: Record<string, number>;
 }
 
 // starting points, all off; edit or delete them in the web ui
@@ -52,7 +58,9 @@ let data: Data = {
   mode: {},
   safety: {},
   silenced: {},
-  behavior: { global: { modifiers: presets, instructions: '' } },
+  behavior: { global: { modifiers: presets, instructions: '', opinions: '' } },
+  ignored: {},
+  forgotten: {},
 };
 
 try {
@@ -142,14 +150,50 @@ export const settings = {
   },
 
   behavior(scope: string): Behavior {
-    return data.behavior[scope] ?? { modifiers: [], instructions: '' };
+    const b = data.behavior[scope];
+    return { modifiers: b?.modifiers ?? [], instructions: b?.instructions ?? '', opinions: b?.opinions ?? '' };
   },
   setBehavior(scope: string, behavior: Behavior) {
-    if (!behavior.modifiers.length && !behavior.instructions && scope !== 'global') {
+    if (!behavior.modifiers.length && !behavior.instructions && !behavior.opinions && scope !== 'global') {
       delete data.behavior[scope];
     } else {
       data.behavior[scope] = behavior;
     }
+    save();
+  },
+
+  /** Whether gork ignores this person here. The owner can't be ignored. */
+  isIgnored(guildId: string | null | undefined, userId: string): boolean {
+    if (userId === env.DISCORD_OWNER_ID) return false;
+    return !!data.ignored[`global:${userId}`] || (!!guildId && !!data.ignored[`guild:${guildId}:${userId}`]);
+  },
+  /** guildId null = everywhere. */
+  setIgnored(guildId: string | null, userId: string, on: boolean) {
+    const k = guildId ? `guild:${guildId}:${userId}` : `global:${userId}`;
+    if (on) data.ignored[k] = true;
+    else delete data.ignored[k];
+    save();
+  },
+  /** Who's ignored in this server, and who's ignored everywhere. */
+  ignoredIn(guildId: string | null) {
+    const ids = (prefix: string) =>
+      Object.keys(data.ignored)
+        .filter((k) => k.startsWith(prefix))
+        .map((k) => k.slice(prefix.length));
+    return { everywhere: ids('global:'), server: guildId ? ids(`guild:${guildId}:`) : [] };
+  },
+
+  /** Anything older than this (epoch ms) is wiped from gork's memory in that channel. */
+  memoryStart(guildId: string | null | undefined, channelId: string): number {
+    return Math.max(
+      data.forgotten.global ?? 0,
+      guildId ? (data.forgotten[`guild:${guildId}`] ?? 0) : 0,
+      data.forgotten[`channel:${channelId}`] ?? 0
+    );
+  },
+  /** id null = everywhere. */
+  forget(scope: Scope | null, id: string | null, at = Date.now()) {
+    data.forgotten[scope && id ? key(scope, id) : 'global'] = at;
     save();
   },
 };
@@ -160,6 +204,7 @@ export function ownerRules(guildId: string | null) {
   return {
     modifiers: scopes.flatMap((b) => b.modifiers.filter((m) => m.on && m.text.trim()).map((m) => m.text.trim())),
     instructions: scopes.map((b) => b.instructions.trim()).filter(Boolean),
+    opinions: scopes.map((b) => b.opinions.trim()).filter(Boolean),
   };
 }
 

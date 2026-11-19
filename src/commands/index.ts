@@ -5,8 +5,10 @@ import {
   SlashCommandBuilder,
   type SlashCommandStringOption,
 } from 'discord.js';
+import { resetTurns } from '../brain';
 import { limits } from '../config';
 import { env } from '../env';
+import { pruneAll } from '../history';
 import {
   type ResponseMode,
   type SafetyMode,
@@ -166,6 +168,107 @@ const shutup = {
   },
 };
 
+const forget = {
+  data: new SlashCommandBuilder()
+    .setName('forget')
+    .setDescription('Wipe what gork remembers; he only knows messages from now on')
+    .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM)
+    .addStringOption((o) =>
+      o
+        .setName('scope')
+        .setDescription('Where to wipe his memory (default: this channel)')
+        .addChoices(
+          { name: 'This channel', value: 'channel' },
+          { name: 'Whole server', value: 'guild' },
+          { name: 'Everywhere', value: 'global' }
+        )
+    ),
+  async execute(interaction: ChatInputCommandInteraction) {
+    if (!canEdit(interaction)) {
+      return interaction.reply({ content: 'nice try', flags: ephemeral });
+    }
+    let scope = interaction.options.getString('scope') ?? 'channel';
+    if (scope === 'guild' && !interaction.guildId) scope = 'channel';
+    const { channelId, guildId } = interaction;
+    if (scope === 'global') settings.forget(null, null);
+    else if (scope === 'guild') settings.forget('guild', guildId!);
+    else settings.forget('channel', channelId);
+    pruneAll();
+    resetTurns((c, g) => scope === 'global' || (scope === 'guild' ? g === guildId : c === channelId));
+    const where = scope === 'global' ? 'everywhere' : scope === 'guild' ? 'this server' : 'this channel';
+    return interaction.reply({
+      content: `wiped gork's memory for ${where}. he only remembers messages from now on`,
+      flags: ephemeral,
+    });
+  },
+};
+
+const ignore = {
+  data: new SlashCommandBuilder()
+    .setName('ignore')
+    .setDescription('Turn gork off for someone: he stops seeing and answering them')
+    .setContexts(InteractionContextType.Guild)
+    .addSubcommand((s) =>
+      s
+        .setName('add')
+        .setDescription('Make gork ignore someone')
+        .addUserOption((o) => o.setName('user').setDescription('Who').setRequired(true))
+        .addBooleanOption((o) => o.setName('everywhere').setDescription('In every server, not just this one'))
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('remove')
+        .setDescription('Let gork talk to someone again')
+        .addUserOption((o) => o.setName('user').setDescription('Who').setRequired(true))
+        .addBooleanOption((o) => o.setName('everywhere').setDescription('Remove the everywhere ignore too'))
+    )
+    .addSubcommand((s) => s.setName('list').setDescription('Who gork is ignoring')),
+  async execute(interaction: ChatInputCommandInteraction) {
+    const guildId = interaction.guildId;
+    if (!guildId) return interaction.reply({ content: 'this only works in a server', flags: ephemeral });
+    if (!canEdit(interaction)) {
+      return interaction.reply({ content: 'nah only my owner gets to touch that', flags: ephemeral });
+    }
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'list') {
+      const { everywhere, server } = settings.ignoredIn(guildId);
+      const fmt = (ids: string[]) => (ids.length ? ids.map((id) => `<@${id}>`).join(', ') : 'nobody');
+      return interaction.reply({
+        content: `ignored in this server: ${fmt(server)}\nignored everywhere: ${fmt(everywhere)}`,
+        flags: ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    }
+    const user = interaction.options.getUser('user', true);
+    const everywhere = interaction.options.getBoolean('everywhere') ?? false;
+    if (sub === 'add') {
+      if (user.id === env.DISCORD_OWNER_ID) {
+        return interaction.reply({ content: "can't ignore my owner", flags: ephemeral });
+      }
+      if (user.id === interaction.client.user.id) {
+        return interaction.reply({ content: 'i cant ignore myself', flags: ephemeral });
+      }
+      settings.setIgnored(everywhere ? null : guildId, user.id, true);
+      pruneAll();
+      return interaction.reply({
+        content: `gork is ignoring <@${user.id}> ${everywhere ? 'everywhere' : 'in this server'}. he won't see or answer them`,
+        flags: ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    }
+    settings.setIgnored(guildId, user.id, false);
+    if (everywhere) settings.setIgnored(null, user.id, false);
+    const still = settings.isIgnored(guildId, user.id);
+    return interaction.reply({
+      content: still
+        ? `removed the server ignore, but <@${user.id}> is still ignored everywhere. run it again with everywhere: true`
+        : `gork can see <@${user.id}> again (from new messages on)`,
+      flags: ephemeral,
+      allowedMentions: { parse: [] },
+    });
+  },
+};
+
 const ping = {
   data: new SlashCommandBuilder().setName('ping').setDescription('Check if gork is alive'),
   async execute(interaction: ChatInputCommandInteraction) {
@@ -182,4 +285,4 @@ export const commands: Record<
     data: { name: string; toJSON(): unknown };
     execute: (i: ChatInputCommandInteraction) => Promise<unknown>;
   }
-> = { mode, safety, shutup, ping };
+> = { mode, safety, shutup, forget, ignore, ping };

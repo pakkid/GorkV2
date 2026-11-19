@@ -12,6 +12,7 @@ import {
   type Transcript,
   untrusted,
 } from './history';
+import { leakChecker } from './leaks';
 import { logger } from './log';
 import { mentionNames, roster } from './members';
 import { modeOf, ownerRules, settings } from './settings';
@@ -64,6 +65,20 @@ export function setTakeover(channelId: string, on: boolean) {
   // he wasn't there for it: what happened during the takeover is old news, not things to answer
   const chLog = channelLog(channelId);
   chLog.lastSeenId = chLog.messages.at(-1)?.id ?? chLog.lastSeenId;
+}
+
+/** After a /forget: stop whatever gork was in the middle of in those channels, and start him fresh. */
+export function resetTurns(match: (channelId: string, guildId: string | null) => boolean) {
+  for (const state of states.values()) {
+    if (!match(state.id, state.guildId)) continue;
+    clearTimeout(state.timer);
+    state.abort?.abort();
+    state.rerun = false;
+    state.urgent = false;
+    state.quietStreak = 0;
+    state.quietUntil = 0;
+    state.interruptedBy = [];
+  }
 }
 
 const nowFmt = new Intl.DateTimeFormat('en-US', {
@@ -213,12 +228,16 @@ async function run(state: ChannelState) {
     const spoken = new Set(chLog.messages.filter((m) => m.self).map((m) => normalize(m.content)));
 
     const emojis = guild ? emojiList(guild) : undefined;
+    const rules = ownerRules(state.guildId);
+    // reading out the owner's instructions or his taste list, or saying he was told to
+    const leaks = leakChecker(rules, transcript.text);
     const said: string[] = [];
     const searches: string[] = [];
     // lines that got thrown out (worn-out bit, not english), so a ping that only produced
     // those gets one more go
     const tired: string[] = [];
     const foreign: string[] = [];
+    const leaked: string[] = [];
     let sent = 0;
     let retried = false;
     // a ping about politics gets one flat no per turn, nothing more
@@ -230,7 +249,7 @@ async function run(state: ChannelState) {
       const wanted: string[] = [];
 
       for await (const action of think({
-        system: systemPrompt(safe, ownerRules(state.guildId), canSearchWeb),
+        system: systemPrompt(safe, rules, canSearchWeb),
         prompt: contextPrompt({
           place: state.place,
           topic: state.topic,
@@ -249,7 +268,8 @@ async function run(state: ChannelState) {
           said,
           tired: retried ? tired : [],
           foreign: retried ? foreign : [],
-          silent: retried && !tired.length && !foreign.length,
+          leaked: retried ? leaked : [],
+          silent: retried && !tired.length && !foreign.length && !leaked.length,
           canSearch,
         }),
         images: round === 0 ? transcript.images : [],
@@ -274,6 +294,11 @@ async function run(state: ChannelState) {
         if (hasForeignScript(action.text)) {
           log.info(`${state.place}: dropped a message that wasn't in english: ${action.text}`);
           foreign.push(action.text);
+          continue;
+        }
+        if (leaks(action.text)) {
+          log.info(`${state.place}: dropped a message that gave away his setup: ${action.text}`);
+          leaked.push(action.text);
           continue;
         }
         // the model likes replying to something from 10 minutes ago because it's in the

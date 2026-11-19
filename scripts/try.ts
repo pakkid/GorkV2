@@ -61,6 +61,8 @@ const prompt = (searches: string[], said: string[], canSearch: boolean, retry = 
     canSearch,
   });
 
+// TRY_OPINIONS="loves the warriors, hates marvel" to see how his taste comes out
+const rules = { modifiers: [], instructions: [], opinions: process.env.TRY_OPINIONS ? [process.env.TRY_OPINIONS] : [] };
 console.log(`model: ${env.AI_MODEL} via ${env.AI_PROVIDER} ${env.AI_BASE_URL ?? ''}`);
 console.log(`web search: ${canSearchWeb ? 'on' : 'off (no EXA_API_KEY)'}\n`);
 console.log(transcript.text, '\n');
@@ -81,7 +83,7 @@ for (let round = 0; round <= web.maxSearches + 1; round++) {
   const canSearch = canSearchWeb && round < web.maxSearches;
   const wanted: string[] = [];
   for await (const action of think({
-    system: systemPrompt(false, undefined, canSearchWeb),
+    system: systemPrompt(false, rules, canSearchWeb),
     prompt: prompt(searches, said, canSearch, retried ? { foreign, silent: !foreign.length } : undefined),
     images: [],
   })) {

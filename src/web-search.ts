@@ -13,6 +13,13 @@ interface ExaResult {
   url: string;
   publishedDate?: string | null;
   text?: string;
+  highlights?: string[];
+}
+
+const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+function clip(s: string, n: number) {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 /** Search the web with Exa and format the hits for the prompt. Never throws. */
@@ -26,7 +33,13 @@ export async function searchWeb(query: string): Promise<string> {
         query,
         type: 'auto',
         numResults: cfg.results,
-        contents: { text: { maxCharacters: cfg.charsPerResult } },
+        // highlights are the bits of each page that answer the query. the start of a page's
+        // text (what gork used to get) is mostly menus, cookie banners and headlines,
+        // so the actual answer was usually cut off. a little text is the fallback
+        contents: {
+          highlights: { query, maxCharacters: cfg.charsPerResult },
+          text: { maxCharacters: 400 },
+        },
       }),
       signal: AbortSignal.timeout(cfg.timeoutMs),
     });
@@ -36,9 +49,10 @@ export async function searchWeb(query: string): Promise<string> {
     if (!results.length) return `no results for "${query}"`;
     return results
       .map((r) => {
-        const date = r.publishedDate ? ` (${r.publishedDate.slice(0, 10)})` : '';
-        const text = (r.text ?? '').replace(/\s+/g, ' ').trim();
-        return untrusted(`- ${r.title ?? r.url}${date} ${r.url}\n  ${text}`);
+        const date = r.publishedDate ? ` (published ${r.publishedDate.slice(0, 10)})` : '';
+        const highlights = (r.highlights ?? []).map(flat).filter(Boolean).join(' … ');
+        const body = clip(highlights || flat(r.text ?? ''), cfg.charsPerResult);
+        return untrusted(`- ${flat(r.title || r.url)}${date} ${r.url}\n  ${body}`);
       })
       .join('\n');
   } catch (error) {
