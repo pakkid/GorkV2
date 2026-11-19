@@ -25,6 +25,7 @@ export interface ChatMsg {
   replyToId?: string;
   // fallback for when the replied-to message isn't in the buffer
   replySnippet?: string;
+  // files, plus the picture from gif/image/video link embeds (klipy, tenor, youtube...)
   attachments: { name: string; url: string; type: string }[];
   extras: string[];
   reactions: Map<string, number>;
@@ -76,7 +77,24 @@ export function toChatMsg(message: Message): ChatMsg {
   const extras: string[] = [];
 
   if (message.type === MessageType.UserJoin) extras.push('joined the server');
+  const embedImages: ChatMsg['attachments'] = [];
   for (const embed of message.embeds) {
+    // a gif link (klipy, tenor, giphy) unfurls into a gifv embed whose thumbnail is a still
+    // of the gif. send that to the model like an image, or gork only gets its title
+    const kind = embed.data.type;
+    const pic =
+      embed.image ?? (kind === 'gifv' || kind === 'image' || kind === 'video' ? embed.thumbnail : null);
+    const url = pic?.proxyURL ?? pic?.url;
+    const title = clip(embed.title || embed.provider?.name || '', 100);
+    if (url) {
+      embedImages.push({
+        name: title || (kind === 'gifv' ? 'gif' : 'image'),
+        url,
+        type: kind === 'gifv' ? 'image/gif' : 'image/embed',
+      });
+      // the gif tag already carries the title
+      if (kind === 'gifv' || kind === 'image') continue;
+    }
     const text = [embed.title, embed.description].filter(Boolean).join(' — ');
     if (text) extras.push(`embed: ${clip(text, 200)}`);
   }
@@ -122,11 +140,14 @@ export function toChatMsg(message: Message): ChatMsg {
     content: resolveContent(message, message.content),
     replyToId,
     replySnippet,
-    attachments: [...message.attachments.values()].map((a) => ({
-      name: a.name,
-      url: a.url,
-      type: a.contentType ?? 'unknown',
-    })),
+    attachments: [
+      ...[...message.attachments.values()].map((a) => ({
+        name: a.name,
+        url: a.url,
+        type: a.contentType ?? 'unknown',
+      })),
+      ...embedImages,
+    ],
     extras,
     reactions,
     mentionsSelf:
@@ -482,7 +503,7 @@ export function renderTranscript(
     if (m.edited) tags.push('edited');
     for (const a of m.attachments) {
       const isImage = a.type.startsWith('image/');
-      tags.push(`${isImage ? 'image' : 'file'}: ${a.name}`);
+      tags.push(`${a.type === 'image/gif' ? 'gif' : isImage ? 'image' : 'file'}: ${a.name}`);
       if (isImage) images.push({ url: a.url, id: m.id });
     }
     tags.push(...m.extras);
