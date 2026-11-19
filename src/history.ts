@@ -150,8 +150,9 @@ export class ChannelLog {
   constructor(readonly id = '') {}
 
   /** Wiped with /forget, or from someone gork is set to ignore: he never sees it. */
-  hidden(msg: Pick<ChatMsg, 'createdAt' | 'authorId' | 'self'>) {
-    if (msg.createdAt < settings.memoryStart(this.guildId, this.id)) return true;
+  hidden(msg: Pick<ChatMsg, 'id' | 'authorId' | 'self'>) {
+    const start = settings.memoryStart(this.guildId, this.id);
+    if (start && cmpId(msg.id, start) <= 0) return true;
     return !msg.self && settings.isIgnored(this.guildId, msg.authorId);
   }
 

@@ -190,9 +190,11 @@ const forget = {
     let scope = interaction.options.getString('scope') ?? 'channel';
     if (scope === 'guild' && !interaction.guildId) scope = 'channel';
     const { channelId, guildId } = interaction;
-    if (scope === 'global') settings.forget(null, null);
-    else if (scope === 'guild') settings.forget('guild', guildId!);
-    else settings.forget('channel', channelId);
+    // the command's own id: discord made it, so everything before it is older by discord's clock
+    const upTo = interaction.id;
+    if (scope === 'global') settings.forget(null, null, upTo);
+    else if (scope === 'guild') settings.forget('guild', guildId!, upTo);
+    else settings.forget('channel', channelId, upTo);
     pruneAll();
     resetTurns((c, g) => scope === 'global' || (scope === 'guild' ? g === guildId : c === channelId));
     const where = scope === 'global' ? 'everywhere' : scope === 'guild' ? 'this server' : 'this channel';

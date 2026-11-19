@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP } from 'node:net';
-import { type Client, PermissionFlagsBits, type SendableChannels } from 'discord.js';
+import { type Client, PermissionFlagsBits, type SendableChannels, SnowflakeUtil } from 'discord.js';
 import { env } from '../env';
 import { logger } from '../log';
 import { systemPrompt } from '../ai/prompt';
 import { isTakenOver, resetTurns, sendAs, setTakeover } from '../brain';
-import { type ChatMsg, channelLog, pruneAll } from '../history';
+import { type ChatMsg, channelLog, cmpId, pruneAll } from '../history';
 import { type Behavior, type Modifier, ownerRules, settings } from '../settings';
 import { summary } from '../stats';
 import { syncTokenmaxxing, tokenmaxxingStatus } from '../tokenmaxxing';
@@ -272,7 +272,13 @@ async function handle(client: Client, req: IncomingMessage, res: ServerResponse)
       return send(res, 200, { ok: true });
     }
     if (method === 'POST' && url.pathname === '/api/live/forget') {
-      settings.forget('channel', channel.id);
+      // newest message discord knows about here, so nothing depends on this machine's clock
+      const chLog = channelLog(channel.id);
+      const known = [chLog.messages.at(-1)?.id, 'lastMessageId' in channel ? channel.lastMessageId : null]
+        .filter((id): id is string => !!id)
+        .sort(cmpId)
+        .at(-1);
+      settings.forget('channel', channel.id, known ?? SnowflakeUtil.generate().toString());
       pruneAll();
       resetTurns((id) => id === channel.id);
       log.info(`wiped gork's memory of ${channel.id} from the web ui`);

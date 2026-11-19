@@ -35,8 +35,10 @@ interface Data {
   behavior: Record<string, Behavior>;
   // people gork can't see or hear. 'global:<user id>' or 'guild:<guild id>:<user id>'
   ignored: Record<string, true>;
-  // gork's memory starts here (epoch ms). 'global', 'guild:<id>' or 'channel:<id>'
-  forgotten: Record<string, number>;
+  // gork's memory starts after this message id. 'global', 'guild:<id>' or 'channel:<id>'.
+  // a discord id and not a time: discord's clock and this machine's don't agree, and
+  // a box running a few minutes fast hid every new message, so gork went deaf
+  forgotten: Record<string, string>;
 }
 
 // starting points, all off; edit or delete them in the web ui
@@ -68,6 +70,8 @@ try {
 } catch {
   // first run
 }
+// the first version stored machine-clock times here, which is the deaf-gork bug. drop them
+for (const [k, v] of Object.entries(data.forgotten)) if (typeof v !== 'string') delete data.forgotten[k];
 
 let saveTimer: NodeJS.Timeout | undefined;
 function save() {
@@ -82,6 +86,9 @@ function save() {
     }
   }, 200);
 }
+
+// discord ids grow over time; compare them without BigInt
+const newer = (a: string, b: string) => a.length > b.length || (a.length === b.length && a > b);
 
 const key = (scope: Scope, id: string) => `${scope}:${id}`;
 
@@ -183,17 +190,18 @@ export const settings = {
     return { everywhere: ids('global:'), server: guildId ? ids(`guild:${guildId}:`) : [] };
   },
 
-  /** Anything older than this (epoch ms) is wiped from gork's memory in that channel. */
-  memoryStart(guildId: string | null | undefined, channelId: string): number {
-    return Math.max(
-      data.forgotten.global ?? 0,
-      guildId ? (data.forgotten[`guild:${guildId}`] ?? 0) : 0,
-      data.forgotten[`channel:${channelId}`] ?? 0
-    );
+  /** Messages up to and including this id are wiped from gork's memory in that channel. */
+  memoryStart(guildId: string | null | undefined, channelId: string): string | undefined {
+    const ids = [
+      data.forgotten.global,
+      guildId ? data.forgotten[`guild:${guildId}`] : undefined,
+      data.forgotten[`channel:${channelId}`],
+    ].filter((v): v is string => !!v);
+    return ids.reduce<string | undefined>((max, v) => (!max || newer(v, max) ? v : max), undefined);
   },
-  /** id null = everywhere. */
-  forget(scope: Scope | null, id: string | null, at = Date.now()) {
-    data.forgotten[scope && id ? key(scope, id) : 'global'] = at;
+  /** Forget everything up to message `upTo` (a discord id). scope null = everywhere. */
+  forget(scope: Scope | null, id: string | null, upTo: string) {
+    data.forgotten[scope && id ? key(scope, id) : 'global'] = upTo;
     save();
   },
 };
