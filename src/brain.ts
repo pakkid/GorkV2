@@ -9,6 +9,7 @@ import {
   channelLog,
   hasForeignScript,
   renderTranscript,
+  replyContext,
   type Transcript,
   untrusted,
 } from './history';
@@ -206,8 +207,10 @@ async function run(state: ChannelState) {
     await chLog.backfill(state.channel);
     const interruptedBy = new Set(state.interruptedBy);
     state.interruptedBy = [];
-    const transcript = renderTranscript(chLog, interruptedBy);
+    let transcript = renderTranscript(chLog, interruptedBy);
     if (transcript.newCount === 0 && !urgent) return;
+    const earlier = await replyContext(chLog, state.channel, transcript);
+    if (earlier.length) transcript = renderTranscript(chLog, interruptedBy, earlier);
 
     state.calls.push(now);
     chLog.lastSeenId = transcript.lastId;

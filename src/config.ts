@@ -29,6 +29,11 @@ export const history = {
   gapMs: 30 * 60 * 1000,
   // on a fresh start, backfilled messages younger than this still count as new
   freshMs: 2 * 60 * 1000,
+  // a reply to something that's scrolled out of the transcript brings it back, with this
+  // many messages either side (none when it's a reply to gork himself)
+  replyNeighbors: 2,
+  // ...for at most this many replied-to messages per turn
+  replyTargets: 3,
 };
 
 // the server member list gork gets to see

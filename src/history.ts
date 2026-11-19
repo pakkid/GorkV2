@@ -24,6 +24,8 @@ export interface ChatMsg {
   self: boolean;
   content: string;
   replyToId?: string;
+  // who wrote the replied-to message, when discord says, so a wiped/ignored one stays hidden
+  replyAuthorId?: string;
   // fallback for when the replied-to message isn't in the buffer
   replySnippet?: string;
   // files, plus the picture from gif/image/video link embeds (klipy, tenor, youtube...)
@@ -114,10 +116,12 @@ export function toChatMsg(message: Message): ChatMsg {
 
   let replyToId: string | undefined;
   let replySnippet: string | undefined;
+  let replyAuthorId: string | undefined;
   if (message.type === MessageType.Reply && message.reference?.messageId) {
     replyToId = message.reference.messageId;
     // discord.js caches the referenced_message from the gateway payload
     const ref = message.channel.messages.cache.get(replyToId);
+    replyAuthorId = ref?.author.id ?? message.mentions.repliedUser?.id;
     if (ref) {
       const who = ref.member?.displayName ?? ref.author.displayName;
       replySnippet = `${who}: ${clip(ref.content || '[attachment]', 80)}`;
@@ -142,6 +146,7 @@ export function toChatMsg(message: Message): ChatMsg {
     self: message.author.id === selfId,
     content: resolveContent(message, message.content),
     replyToId,
+    replyAuthorId,
     replySnippet,
     attachments: [
       ...[...message.attachments.values()].map((a) => ({
@@ -168,6 +173,8 @@ export class ChannelLog {
   byId = new Map<string, ChatMsg>();
   // id of the newest message gork has already thought about
   lastSeenId?: string;
+  // messages fetched from discord around older replied-to messages, by the replied-to id
+  earlier = new Map<string, ChatMsg[]>();
   // undefined until the first message or backfill says which server this is
   guildId?: string | null;
   private backfilled?: Promise<void>;
@@ -183,6 +190,7 @@ export class ChannelLog {
 
   /** Drop everything that's hidden now, after a /forget or a new ignore. */
   prune() {
+    this.earlier.clear();
     const keep = this.messages.filter((m) => !this.hidden(m));
     if (keep.length === this.messages.length) return;
     this.messages = keep;
@@ -276,6 +284,62 @@ export function recordMessage(message: Message): ChatMsg | undefined {
 /** Start cutting a new gif's frames now, so they're ready by the time gork thinks. */
 function warmGifs(msg: ChatMsg) {
   for (const a of msg.attachments) if (a.video) void gifFrames(a.video);
+}
+
+/**
+ * Messages that new messages reply to but that scrolled out of the transcript, with a couple
+ * either side so gork knows what was going on. A reply to gork gets only his own line.
+ * Anything wiped with /forget or from someone ignored never comes back.
+ */
+export async function replyContext(
+  chLog: ChannelLog,
+  channel: TextBasedChannel,
+  t: Pick<Transcript, 'ids' | 'newIds'>
+): Promise<ChatMsg[]> {
+  const targets = [
+    ...new Set(
+      t.newIds
+        .map((id) => chLog.byId.get(id)?.replyToId)
+        .filter((id): id is string => !!id && !t.ids.has(id))
+    ),
+  ].slice(-cfg.replyTargets);
+  if (!targets.length) return [];
+  const found = new Map<string, ChatMsg>();
+  for (const m of (await Promise.all(targets.map((id) => around(chLog, channel, id)))).flat()) {
+    // whatever's already in the transcript stays there, never twice
+    if (!t.ids.has(m.id)) found.set(m.id, m);
+  }
+  return [...found.values()].sort((a, b) => cmpId(a.id, b.id));
+}
+
+async function around(chLog: ChannelLog, channel: TextBasedChannel, id: string) {
+  const n = cfg.replyNeighbors;
+  const i = chLog.messages.findIndex((m) => m.id === id);
+  let msgs: ChatMsg[];
+  if (i >= n) msgs = chLog.messages.slice(i - n, i + n + 1);
+  else {
+    let fetched = chLog.earlier.get(id);
+    if (!fetched) {
+      try {
+        const res = await channel.messages.fetch({ around: id, limit: 2 * n + 1 });
+        fetched = [...res.values()]
+          .filter((m) => !m.content.startsWith('//'))
+          .map(toChatMsg)
+          .sort((a, b) => cmpId(a.id, b.id));
+      } catch (error) {
+        log.debug(`couldn't fetch around ${id} in ${channel.id}`, error);
+        return [];
+      }
+      chLog.earlier.set(id, fetched);
+      if (chLog.earlier.size > 50) chLog.earlier.delete(chLog.earlier.keys().next().value!);
+    }
+    msgs = fetched;
+  }
+  // checked every time, so a /forget or ignore after the fetch still counts
+  msgs = msgs.filter((m) => !m.deleted && !chLog.hidden(m));
+  const target = msgs.find((m) => m.id === id);
+  if (!target) return [];
+  return target.self ? [target] : msgs;
 }
 
 /** After a /forget or a new ignore: drop what gork shouldn't see any more from every channel he has loaded. */
@@ -431,7 +495,9 @@ const isGorkName = (n: string) => /^g[o0]r[kc]\b/i.test(n.trim());
  */
 export function renderTranscript(
   log: ChannelLog,
-  interruptedBy: ReadonlySet<string> = new Set()
+  interruptedBy: ReadonlySet<string> = new Set(),
+  // older messages new ones reply to, from replyContext. shown above the chat, never twice
+  earlier: readonly ChatMsg[] = []
 ): Transcript {
   const now = Date.now();
   const visible = log.messages.filter((m) => !m.deleted);
@@ -447,6 +513,17 @@ export function renderTranscript(
   }
 
   const ids = new Set(window.map((m) => m.id));
+  const before = earlier.filter((m) => !ids.has(m.id));
+  const earlierById = new Map(before.map((m) => [m.id, m]));
+  // who's replying to what among the new messages, so the replied-to lines stand out
+  const repliedBy = new Map<string, string[]>();
+  for (const m of window) {
+    if (!m.replyToId || m.self || (log.lastSeenId && cmpId(m.id, log.lastSeenId) <= 0)) continue;
+    const names = repliedBy.get(m.replyToId) ?? [];
+    const name = cleanName(m.name);
+    if (!names.includes(name)) names.push(name);
+    repliedBy.set(m.replyToId, names);
+  }
   const lines: string[] = [];
   const images: Transcript['images'] = [];
   let newCount = 0;
@@ -454,6 +531,64 @@ export function renderTranscript(
   let markedNew = false;
   let lastDay = '';
   let prevAt = 0;
+  const line = (m: ChatMsg, full: boolean, inWindow: boolean) => {
+    let who: string;
+    if (m.self) who = 'gork (you)';
+    else {
+      who = whoIs(m);
+      if (m.bot) who += ' ⟦bot⟧';
+      if (isGorkName(m.name) || isGorkName(m.globalName ?? '')) who += ' ⟦not you⟧';
+    }
+
+    let head = `[${m.id} ${inWindow ? '' : `${dateFmt.format(m.createdAt)} `}${formatTime(m.createdAt)}] ${who}`;
+    if (m.replyToId) {
+      const t = ids.has(m.replyToId) ? log.byId.get(m.replyToId) : earlierById.get(m.replyToId);
+      // never show a snippet of something wiped with /forget or from someone ignored
+      const wiped = log.hidden({ id: m.replyToId, authorId: m.replyAuthorId ?? '', self: false });
+      if (t) {
+        head += ` ↪ ${m.replyToId} ${t.self ? 'gork (you)' : cleanName(t.name)}`;
+      } else if (m.replySnippet && !wiped) {
+        head += ` ↪ (older ${m.replyToId}) ${hideForeign(untrusted(m.replySnippet))}`;
+      } else {
+        head += ` ↪ (older ${m.replyToId})`;
+      }
+    }
+
+    // old walls of text get clipped, new stuff is shown in full
+    const body = hideForeign(untrusted(full ? m.content : clip(m.content, 600)));
+    const tags: string[] = [];
+    const replies = repliedBy.get(m.id);
+    if (replies) tags.push(`replied to by ${replies.join(', ')}`);
+    if (m.mentionsSelf && !m.self) tags.push('pinged you');
+    if (!m.self && isPolitical(m.content)) tags.push('political, stay out');
+    if (interruptedBy.has(m.id)) tags.push('interrupted you');
+    if (m.edited) tags.push('edited');
+    for (const a of m.attachments) {
+      const isImage = a.type.startsWith('image/');
+      tags.push(`${a.type === 'image/gif' ? 'gif' : isImage ? 'image' : 'file'}: ${a.name}`);
+      if (isImage && inWindow) images.push({ url: a.url, id: m.id, video: a.video });
+    }
+    tags.push(...m.extras);
+    if (m.reactions.size) {
+      tags.push(
+        `reactions: ${[...m.reactions].map(([e, n]) => (n > 1 ? `${e}×${n}` : e)).join(' ')}`
+      );
+    }
+    return `${head}: ${body}${tags.length ? ` ⟦${tags.map(untrusted).join('⟧ ⟦')}⟧` : ''}`;
+  };
+
+  if (before.length) {
+    lines.push('--- from further back: messages the new ones reply to (marked ⟦replied to by⟧), with a bit around them. context only ---');
+    let prev: ChatMsg | undefined;
+    for (const m of before) {
+      // a gap between two separate bits of old chat
+      if (prev && m.createdAt - prev.createdAt >= cfg.gapMs) lines.push('(…)');
+      lines.push(line(m, false, false));
+      prev = m;
+    }
+    lines.push('--- end of the older bits ---', '');
+  }
+
   const staleBefore = now - cfg.staleMs;
   const hasStale = window.some((m) => m.createdAt < staleBefore);
   let markedRecent = false;
@@ -485,48 +620,7 @@ export function renderTranscript(
     }
     prevAt = m.createdAt;
 
-    let who: string;
-    if (m.self) who = 'gork (you)';
-    else {
-      who = whoIs(m);
-      if (m.bot) who += ' ⟦bot⟧';
-      if (isGorkName(m.name) || isGorkName(m.globalName ?? '')) who += ' ⟦not you⟧';
-    }
-
-    let head = `[${m.id} ${formatTime(m.createdAt)}] ${who}`;
-    if (m.replyToId) {
-      const t = ids.has(m.replyToId) ? log.byId.get(m.replyToId) : undefined;
-      if (t) {
-        head += ` ↪ ${m.replyToId} ${t.self ? 'gork (you)' : cleanName(t.name)}`;
-      } else if (m.replySnippet) {
-        head += ` ↪ (older ${m.replyToId}) ${hideForeign(untrusted(m.replySnippet))}`;
-      } else {
-        head += ` ↪ (older ${m.replyToId})`;
-      }
-    }
-
-    // old walls of text get clipped, new stuff is shown in full
-    const body = hideForeign(untrusted(isNew ? m.content : clip(m.content, 600)));
-    const tags: string[] = [];
-    if (m.mentionsSelf && !m.self) tags.push('pinged you');
-    if (!m.self && isPolitical(m.content)) tags.push('political, stay out');
-    if (interruptedBy.has(m.id)) tags.push('interrupted you');
-    if (m.edited) tags.push('edited');
-    for (const a of m.attachments) {
-      const isImage = a.type.startsWith('image/');
-      tags.push(`${a.type === 'image/gif' ? 'gif' : isImage ? 'image' : 'file'}: ${a.name}`);
-      if (isImage) images.push({ url: a.url, id: m.id, video: a.video });
-    }
-    tags.push(...m.extras);
-    if (m.reactions.size) {
-      tags.push(
-        `reactions: ${[...m.reactions].map(([e, n]) => (n > 1 ? `${e}×${n}` : e)).join(' ')}`
-      );
-    }
-
-    lines.push(
-      `${head}: ${body}${tags.length ? ` ⟦${tags.map(untrusted).join('⟧ ⟦')}⟧` : ''}`
-    );
+    lines.push(line(m, isNew, true));
   }
 
   const last = window.at(-1);
